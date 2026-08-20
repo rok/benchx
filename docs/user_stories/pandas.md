@@ -1,7 +1,3 @@
-# pandas user story
-
----
-
 # pandas user stories
 
 **Project:** pandas, https://github.com/pandas-dev/pandas
@@ -13,10 +9,6 @@
 Contributors and reviewers are interested in knowing that their PRs don't degrade performance. Infrastructure operators want benchmarks that can be run reliably, on well-funded infrastructure.
 
 ## Stories
-
-Use as many as apply. Format:
-
-### Fixes shouldn't regress performance (too much)
 
 > As a contributor or reviewer, I want to know that my work will not meaningfully degrade performance.
 
