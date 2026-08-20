@@ -1,7 +1,3 @@
-# Narwhals
-
----
-
 # Narwhals user stories
 
 **Project:** Narwhals, https://github.com/narwhals-dev/narwhals
@@ -21,8 +17,6 @@ support natively themselves.
 
 ## Stories
 
-### Minimise overhead
-
 > As a contributor/reviewer, I want to know that a PR doesn't increase overhead too much.
 
 **Today:** If a reviewer suspects that an operation may incur unnecessary overhead, they
@@ -31,7 +25,7 @@ support natively themselves.
 **Pain:** This is a manual process, and it's also very noisy. Results vary noticeably
   between runs. Furthermore, it's not captured for posterity on GitHub.
 
-Example of PRs:
+Example PRs:
 - Reducing overhead based on avoiding copies (this showed up in the Kaggle notebook,
   although it's not captured on GitHub): https://github.com/narwhals-dev/narwhals/pull/2559.
 - Improving one small operation, measured with a micro-benchmark (and `timeit`): 
@@ -39,7 +33,7 @@ https://github.com/narwhals-dev/narwhals/pull/1276.
 
 > As a downstream library, I want to know that adopting Narwhals won't result in extra overhead.
 
-**Today:** I run my existing benchmarks with and without benchmarks. If they're good,
+**Today:** I run my existing benchmarks with and without Narwhals. If they're good,
   I start using Narwhals.
 **Pain:** I won't maintain two different versions of my library (one with and one without Narwhals).
   So, just because overhead is low now, doesn't mean it will stay low forever.
@@ -58,6 +52,11 @@ What I think is achievable would be to benchmark some tests (e.g. TPC-H queries)
 compare them with Narwhals paths, and check that the overhead does not increase over time. Something like
 that, for each PR, we a notification telling us "this PR does not meaningfully alter overhead for any backend",
 or "this PR adds 20% overhead for the pandas backend".
+
+Discussion around benchmarking in Narwhals: https://github.com/narwhals-dev/narwhals/issues/805. Some points:
+- codspeed evaluated, but not used (Polars removed it, Itamar's comment about limited usefulness for non-algorithmic benchmarking)
+- full TPCH even at just 0.25 scale run can take 40 minutes in CI, which is too long
+- maybe, only run based on trigger (comment or label) rather than every PR
 
 ## Scale and constraints
 
