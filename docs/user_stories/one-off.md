@@ -1,7 +1,7 @@
 # One-off benchmarking user stories
 
 
-# On-off benchmarking user stories (multiple projects)
+# One-off benchmarking user stories (multiple projects)
 
 **Project:** multiple projects, individual stories have links to examples 
 **Current benchmarking setup:** One-off, ad hoc benchmarking to guide ongoing development.
