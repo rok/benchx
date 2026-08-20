@@ -10,7 +10,7 @@
 
 ## Who uses benchmarks here
 
-Contributors and reviewers are interested in knowing that their PRs don't degrade performance. Infrastructure operators want benchmarks that can be run reliably, and with funding.
+Contributors and reviewers are interested in knowing that their PRs don't degrade performance. Infrastructure operators want benchmarks that can be run reliably, on well-funded infrastructure.
 
 ## Stories
 
@@ -28,35 +28,33 @@ Sometimes, the comments are addressed, e.g. https://github.com/pandas-dev/pandas
 > As a maintainer, I want to know what impact different dependencies or builds will have.
 
 **Today:** Manual testing, if any.
-**Pain:** ASV does not allow for this level of customisability, https://github.com/pandas-dev/pandas/issues/55007. Cross-arch comparisons also desired, as is viewing the exact dependencies used for a particular run (not currently recorded).
+**Pain:** ASV does not allow for this level of customisability, https://github.com/pandas-dev/pandas/issues/55007. Cross-arch comparisons also desired, as is the ability to view the exact dependencies used for a particular run (not currently recorded).
 
 > As a maintainer, I want there to be comprehensive end-to-end testing.
 
 **Today:** Benchmarks only test microbenchmarks (single operations).
 **Pain:** Issue related to more realistic end-to-end benchmarks (e.g. excessive internal copying) aren't surfaced.
 
-> As a maintainer, I want it to be easy to trigger a full benchmark run, for example by commenting `/perf`
+> As a maintainer, I want it to be easy to trigger a full benchmark run, for example by commenting `/perf`.
 
 **Today:** I either have to wait for a PR to be merged, or ask a contributor to run the benchmarks locally.
 **Pain:** The signal may come late, or the noise from running local benchmarks may be unreliable.
 
 Discussion where `/perf` was proposed https://github.com/pandas-dev/pandas/issues/55007#issuecomment-1779858378.
 
-> As a maintainer, I want to be able to access raw benchmark results
+> As a maintainer, I want to be able to access raw benchmark results.
 
 **Today:** Summary statistics are viewable on the asv website.
 **Pain:** To get a more complete picture, it may be useful to look at the raw numbers.
 
-Discussion where `/perf` was proposed https://github.com/pandas-dev/pandas/issues/55007#issuecomment-1779858378.
-
-> As a maintainer / infra engineer, I want a benchmark suite which is not prohibitively expensive to run
+> As a maintainer / infra engineer, I want a benchmark suite which is not prohibitively expensive to run.
 
 **Today:** The benchmark suite takes ~7 hours. Some individual tests take >20 seconds.
 **Pain:** It's not feasible to regularly run a 7 hour benchmark suite locally, and can it realistically be used to block PRs.
 
 Discussion https://github.com/pandas-dev/pandas/issues/23412
 
-> As a maintainer / contributor, I would like to have representative datasets to test with
+> As a maintainer / contributor, I want to have representative datasets to test with.
 
 **Today:** Benchmarks run with toy datasets which are very artificial.
 **Pain:** We don't know how representative the benchmarks are of real datasets.
