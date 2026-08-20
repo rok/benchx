@@ -5,8 +5,10 @@ bindings built on it.
 **Current benchmarking setup:** `archery benchmark`, the benchmarking front-end
 that ships in the Arrow repository (`dev/archery`), run by hand on a
 contributor's own machine against locally configured CMake build directories.
-This is the same tool the CI pipeline drives, but used interactively and with
-its results discarded.
+CI shares only half of this: Conbench's `ArcheryAdapter` runs `archery
+benchmark run` to produce the C++ micro-benchmark results, then compares them
+server-side. `archery benchmark diff` — the comparison described here — runs
+nowhere but on developer machines, and its results are discarded.
 **Contact:** Raúl Cumplido
 
 > Companion to [`apache-arrow.md`](apache-arrow.md), which covers the
@@ -107,6 +109,10 @@ TakeChunkedChunkedStringMonotonicIndices/4194304/1000 43.013M items/sec 43.340M 
   on against hardening off, which compiler was used, or which commit was built.
   That knowledge exists only in the operator's shell history, so the table
   cannot be archived, shared, or re-derived from its own contents.
+- **What ran is decided by leftovers.** Suites are discovered by globbing
+  `*-benchmark` in each build directory, and any benchmark present on only one
+  side is dropped from the table without a count, so a stale binary from an
+  earlier build quietly changes what is being compared.
 - **The verdict is wrong.** Every row is filed under "Non-regressions" because
   the default threshold is a flat 5% applied to medians. The underlying harness
   measured a coefficient of variation of 0.17–0.37% on these very runs and
@@ -133,12 +139,17 @@ TakeChunkedChunkedStringMonotonicIndices/4194304/1000 43.013M items/sec 43.340M 
 development, and diff the two directories. Nothing unrelated is rebuilt and no
 fleet capacity is consumed. Scoping is essential: this build exposes about 3,500
 benchmarks, so `--benchmark-filter` is not a convenience but a requirement.
-**Pain:** The local answer and the eventual CI answer are produced by different
-systems, with different statistics and different presentation, so reconciling
-them is a matter of judgement rather than something the tooling establishes.
-Local results never reach the place where the project keeps its performance
-history, so the exploration behind a merged change is lost even when the change
-lands.
+**Pain:** The local answer and the eventual CI answer share a measurement
+producer but nothing else. Locally, `archery benchmark diff` takes medians and
+applies a flat percentage threshold; in CI, Conbench receives the same runner's
+output and applies its own statistics. The precision differs too: CI's
+`cpp-micro` group runs 6 repetitions at `--repetition-min-time=0.05`, while a
+careful local run at the harness default of 0.5s does roughly ten times the work
+per point. So a local run can easily be the *more* precise of the two, and
+reconciling the two verdicts is a matter of judgement rather than something the
+tooling establishes. Local results also never reach the place where the project
+keeps its performance history, so the exploration behind a merged change is lost
+even when the change lands.
 
 ### Compare against a previous revision or release
 
@@ -186,7 +197,12 @@ indication that this happened. The two output formats also diverge confusingly:
 > measurement, so that the next person asking the same question starts from my
 > answer instead of repeating the work.
 
-**Today:** Nothing. The comparison is printed and lost. Promoting a local
+**Today:** Almost nothing, and what exists is out of reach. `archery benchmark
+run` does capture run metadata — timestamp, full command line, platform, core
+count — expressly so that runs are hard to confuse, but only when the target is
+a git revision, and into a temporary directory that is deleted unless
+`--preserve` is passed. `diff` never captures it at all. In the build-directory
+workflow the comparison is simply printed and lost, and promoting a local
 finding into Arrow's tracked history means re-running it through the CI pipeline
 on fleet hardware, which measures a different build in a different environment.
 **Pain:** The project's two benchmarking modes share a tool but not a result
