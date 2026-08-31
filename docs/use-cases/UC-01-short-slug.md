@@ -68,39 +68,12 @@ $ spin bench -t time_eigvals
 
 Here `time_eigvals` resolves to the benchmark function `benchmarks/benchmarks/linalg.py::Bench.time_eigvals`, which is parametrized with three parameters,
 `size`, `contiguous` and `module`.
-The `spin bench` command internally resolves to
-
-```
-# this is the build dir
-$ export PYTHONPATH="/home/br/repos/scipy/scipy/build-install/usr/lib/python3.12/site-packages"
-
-$ cd benchmarks    # this is where benchmarks live, relative to the SciPy root
-$ asv run --show-stderr --python=same --dry-run --bench time_eigvals
-```
-
-In the `asv` invocation, `--python=same` makes `asv` use the already-built package
-(otherwise, it'll default to rebuilding it in a fresh environment) and `--dry-run`
-makes `asv` skip saving the results.
-Additionally, the `spin bench` command sets environment variables to (partially) control
-the execution state, via
-
-```
-$ export OPENBLAS_NUM_THREADS = 1
-$ export MKL_NUM_THREADS = 1
-```
-
-Note that currently, in SciPy's `spin / asv` combo, these two environment variables
-are hardcoded, and there is no user control over the runtime/execution state.
-
-For the better tool, we certainly want to be able to either leave all environment
-control free, or fully control the user-specified state.
+The `spin bench` command runs in an existing environment and may set environment
+variables before invoking the benchmarking too that its `bench` command abstracts.
 
 The default view is just display. However, results need saving according to the schema,
-for a user might want to add their own view/analysis postprocessing. In the `spin/asv`
-example, this would correspond to `--dry-run` saving results to a local directory.
-
-Finally, postprocessing is problem-specific and is left to user. Further use cases may
-add commonly used viewers/analyzers.
+for a user might want to add their own view/analysis postprocessing, which is
+too problem-specific to specify here.
 
 
 ### 5. Study design
