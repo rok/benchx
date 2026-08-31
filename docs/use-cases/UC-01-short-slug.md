@@ -36,33 +36,71 @@ the benchmark may report one or multiple measurements (CPU time, peak memory).
 
 ### 4. Workflow sketch
 
-The commands or UI actions, in order, including what the actor sees back. Rough is
-fine; the point is to expose where data is produced and consumed.
+Currently, to run a single benchmark in SciPy, one does
+(the workflow is similar for other projects which rely on `asv`)
 
 ```
-$ <command>
-<what they see>
+$ spin bench -t time_eigvals
+
+# snip
+
+[50.00%] ··· Running (linalg.Bench.time_eigvals--).
+[100.00%] ··· linalg.Bench.time_eigvals                                               ok
+[100.00%] ··· ====== ============ =========== ============
+              --                           module
+              ------------------- ------------------------
+               size   contiguous     numpy       scipy
+              ====== ============ =========== ============
+                20      contig      127±40μs    124±30μs
+                20      nocont      121±30μs    128±30μs
+                20     fcontig      108±30μs    106±30μs
+               100      contig      9.14±3ms    15.0±8ms
+               100      nocont     12.6±10ms    10.4±5ms
+               100     fcontig      16.0±6ms    9.76±3ms
+               500      contig        n/a      492±300ms
+               500      nocont        n/a      572±300ms
+               500     fcontig        n/a      676±300ms
+               1000     contig        n/a      2.57±0.7s
+               1000     nocont        n/a      3.48±0.5s
+               1000    fcontig        n/a      3.75±0.06s
+              ====== ============ =========== ============
 ```
 
-Note where the loop closes: what do they do with the answer? If the answer is
-"nothing, they look at it," say that - some use cases really are just display, and
-those have much weaker schema requirements than ones feeding an automated decision.
+Here `time_eigvals` resolves to the benchmark function `benchmarks/benchmarks/linalg.py::Bench.time_eigvals`, which is parametrized with three parameters,
+`size`, `contiguous` and `module`.
+The `spin bench` command internally resolves to
 
 ```
-$ bench-runner benchmark-id
+# this is the build dir
+$ export PYTHONPATH="/home/br/repos/scipy/scipy/build-install/usr/lib/python3.12/site-packages"
 
-N   CPU time, msec  memory, mb
-------------------------------
-10    1e-3              10
-100   0.12              101             
-1000  11.0              1200
+$ cd benchmarks    # this is where benchmarks live, relative to the SciPy root
+$ asv run --show-stderr --python=same --dry-run --bench time_eigvals
 ```
+
+In the `asv` invocation, `--python=same` makes `asv` use the already-built package
+(otherwise, it'll default to rebuilding it in a fresh environment) and `--dry-run`
+makes `asv` skip saving the results.
+Additionally, the `spin bench` command sets environment variables to (partially) control
+the execution state, via
+
+```
+$ export OPENBLAS_NUM_THREADS = 1
+$ export MKL_NUM_THREADS = 1
+```
+
+Note that currently, in SciPy's `spin / asv` combo, these two environment variables
+are hardcoded, and there is no user control over the runtime/execution state.
+
+For the better tool, we certainly want to be able to either leave all environment
+control free, or fully control the user-specified state.
 
 The default view is just display. However, results need saving according to the schema,
-for a user might want to add their own view/analysis postprocessing.
+for a user might want to add their own view/analysis postprocessing. In the `spin/asv`
+example, this would correspond to `--dry-run` saving results to a local directory.
 
-Such postprocessing is too problem-specific to and is left to user.
-Further use cases may add commonly used viewers/analyzers.
+Finally, postprocessing is problem-specific and is left to user. Further use cases may
+add commonly used viewers/analyzers.
 
 
 ### 5. Study design
