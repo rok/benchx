@@ -73,8 +73,9 @@ and error-prone.
 ## Wishes
 
 - Better statistical reliability for benchmarking.
-- More flexible automated control over configuration.
 - Better provenance and richer metadata for benchmarks.
+- Full access to raw benchmarks.
+- More flexible automated control over configuration.
 - Smooth integration with CI pipelines.
 - Flexible one-off benchmarks.
 
@@ -85,9 +86,8 @@ and error-prone.
   Usually, 0-3 benchmark runs per week.
 - Note for context: there was an initiative by a maintainer to regularly
   upload benchmarks from their machine for regression tracking (now outdated):
-  https://github.com/numpy/numpy/issues/28801
-  
-One other historical initiative (ran between 2016 and 2022):
-https://pv.github.io/numpy-bench/
-https://pv.github.io/scipy-bench/ 
+  - https://github.com/numpy/numpy/issues/28801
+- One other historical initiative (ran between 2016 and 2022):
+  - https://pv.github.io/numpy-bench/
+  - https://pv.github.io/scipy-bench/ 
 
