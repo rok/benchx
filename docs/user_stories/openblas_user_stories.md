@@ -77,6 +77,6 @@ over time, on the same plot")
 
 - for a volunteer project with limited funding: weekly cron runs, a dozen of
   benchmarks only;
-- scarse resources for maintenance, no dedicated perfomance engineer role.
+- scarce resources for maintenance, no dedicated perfomance engineer role.
 - need access to various hardware types
 
