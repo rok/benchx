@@ -80,13 +80,10 @@ too problem-specific to specify here.
 
 | Coordinate | Role | Notes |
 |---|---|---|
-| Code identity | free | |
-| Code version | free | |
-| Environment | free | |
-| Execution context | free | |
-
-In the core use case, everything is free since the measurements are ephemeral.
-Other, more specific use cases add actual constraints.
+| Code identity | controlled | |
+| Code version | controlled | |
+| Environment | controlled | |
+| Execution context | controlled | |
 
 Related to the **open question 2**: saving benchmark results may need a knob to control
 whether to append or replace existing saved results. This is useful in several contexts:
