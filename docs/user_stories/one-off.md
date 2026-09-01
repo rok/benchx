@@ -53,7 +53,12 @@ in a single view or a table.
 **Today:** Write an ad-hoc benchmark with an ad-hoc looping over a parameter, run
 the benchmarks for two versions, manually assemble results for analysis.
 For the analysis, I might want to check log-log or log-linear scaling.
-**Pain:** No support for this mode in either a benchmark runner or viewer. 
+**Pain:** No support for this mode in either a benchmark runner or viewer. Users have
+to use ad-hoc scipts which need to reach into results stored in an under-documented
+storage format. Here is one example:
+https://github.com/OpenMathLib/BLAS-Benchmarks/blob/main/analyze.results.example.ipynb,
+which has to make assumptions about the name of the json file with results from an
+`asv` run.
 
 
 ### Compare a benchmark across build modes
