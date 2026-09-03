@@ -103,10 +103,7 @@ n/a
 
 - Profile: new
 - Fields required beyond the core: derived from the benchmark parametrization;
-- New fields not currently in the schema: dynamic, defined by the benchmark itself;
-  Each new field is numerical, needs to have a name and a unit;
-  If a benchmark is not parametrized, the default field `{name: "result", unit: None)`
-  is used. 
+  A benchmark might be parametrized by multiple parameters. See open question 2 though.
 - Comparability key: n/a
 - Validation invariants: n/a
 - Conflicts with existing use cases: n/a
@@ -117,20 +114,17 @@ n/a
 - **Volume:** records per invocation
 - **Retention:** session-scoped
 - **Location:** local working dir
-- **Does this data ever need to join against data from another use case?** Potentially,
-  multiple runs may need joining (e.g. run one more problem size without re-running
-  the previous run). However this is not crucial for this specific use case.
+- **Does this data ever need to join against data from another use case?** No
 
 
 ### 10. Degenerate and failure modes
 
-- What happens when a *controlled* coordinate silently isn't constant: Nothing is
-  controlled therefore this is not an issue. However, a separate utility to check
-  that core values match could be useful.
+- What happens when a *controlled* coordinate silently isn't constant: Emit a warning if
+the execution context drifts during the run.
 - What happens with missing or partial data: Nothing drastic, benchmarking runs are
   manually triggered and are ephemeral. 
 - What is the worst wrong conclusion someone could draw, and does the schema make it
-  harder or easier to draw?
+  harder or easier to draw? n/a
 
 
 ### 11. Non-goals
@@ -147,4 +141,6 @@ measurements to take (CPU time, GPU time, peak memory), how to take measurements
 (how to synchronize the device) etc: in the benchmark itself, in a per-session config,
 in a per-project config?
 
+2. For a parametrized benchmark, when is parametrization resolved? In other words,
+if a benchmark `time_foo` is parametrized with `(size, module)` for `size` being `[10, 100]` and module being `[numpy, cupy]`, for the schema, is it a single benchmark with four parameter variants, or is it a collection of four individual entries, `time_foo[10-numpy]`, `time_foo[10-cupy]`, `time_foo[100-numpy]` and `time_foo[100-cupy]`.
 
