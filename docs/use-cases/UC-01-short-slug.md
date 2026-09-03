@@ -80,16 +80,14 @@ too problem-specific to specify here.
 
 | Coordinate | Role | Notes |
 |---|---|---|
-| Code identity | controlled | |
-| Code version | controlled | |
-| Environment | controlled | |
+| Code identity | free | |
+| Code version | free | can be a dirty tree with local-only changes |
+| Environment | free | runs in the current environment |
 | Execution context | controlled | |
 
-Related to the **open question 2**: saving benchmark results may need a knob to control
-whether to append or replace existing saved results. This is useful in several contexts:
-- add other parameter values without rerunning existing runs;
-- roughly assess run-to-run variations.
-
+This is the simplest use case with a minimum set of requirements: nearly everything
+can be free for this local-only, ad-hoc task.
+The execution context is the only thing which is marked as controlled: we keep the same instrument, interleaving strategy etc the same for the all parameters.
 
 ### 6. Measurements
 
@@ -149,7 +147,4 @@ measurements to take (CPU time, GPU time, peak memory), how to take measurements
 (how to synchronize the device) etc: in the benchmark itself, in a per-session config,
 in a per-project config?
 
-2. Support appending results to the local store, e.g. add one more parameter value
-without rerunning the already-run benchmarks? For this use case the answer might be
-a "no" to avoid coupling between a runner and storage.
 
