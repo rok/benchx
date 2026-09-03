@@ -39,8 +39,8 @@ Detection, alerts, thresholds, scheduling, and run lifecycle are out of scope.
 | Term | Meaning here |
 |---|---|
 | **Case** | Named benchmark workload plus parameters. |
-| **Quantity** | Named output and canonical unit, such as `wall-time` in `s` or `peak-memory` in `By`. Canonical units use UCUM when representable. |
-| **Estimator** | Rule producing the canonical estimate, such as mean, median, minimum, slope, or a source-defined value. |
+| **Quantity** | Named output and canonical unit, such as `wall-time` in `s` or `peak-rss` in `By`. An open, project-extensible vocabulary (§4.4). Canonical units use UCUM when representable. |
+| **Estimator** | Rule producing the canonical estimate, such as mean, median, minimum, slope, a percentile such as `p99`, or a source-defined value. |
 | **Observation** | One replicate measured value after declared normalization. |
 | **Estimate** | Canonical scalar used for plots and analysis; it is not a known “true value.” |
 | **Statistic** | Numeric summary computed from observations, such as a mean, median, percentile, or standard deviation. The series estimator identifies which statistic is the canonical estimate. |
@@ -65,7 +65,8 @@ Use `accuracy`, `precision`, `error`, `bias`, `confidence interval`, and `covera
 7. **Summaries are typed.** Precision, uncertainty, confidence intervals, coverage intervals, and opaque source bounds remain distinct.
 8. **Canonical units are interoperable.** Use UCUM case-sensitive units when representable, normalize values before storage, and preserve the producer's original unit in provenance.
 9. **Ingestion is idempotent and auditable.** Preserve a producer-scoped key, producer/mapping version, native ID, and source payload reference. Producer identity is stable and namespaced; its software version is not part of the idempotency key.
-10. **Decision policy is separate.** Optimization direction, thresholds, guard bands, and alert verdicts do not enter result or series identity.
+10. **Decision policy is separate.** Optimization direction, thresholds, guard bands, and alert verdicts do not enter result or series identity. A quantity may carry its direction as descriptive metadata (§4.4); it never enters identity and never implies a verdict.
+11. **The quantity vocabulary is open.** Adding a quantity is application configuration, not a schema change: it creates new series and touches no existing data. Distinct measurement semantics require distinct quantity names, and a quantity's meaning and unit are immutable once used.
 
 ## 4. Minimal schema
 
@@ -76,7 +77,7 @@ Use `accuracy`, `precision`, `error`, `bias`, `confidence interval`, and `covera
 | `project` | benchmark namespace | unique project key |
 | `source` | benchmark source, usually a repository | unique `(project_id, canonical_uri)` |
 | `benchmark_case` | case plus exact parameters | unique `(project_id, name, parameters)` |
-| `quantity` | named output with canonical UCUM unit when representable | unique `(project_id, name)`; immutable after use |
+| `quantity` | named output with canonical UCUM unit when representable, plus optional descriptive metadata (§4.4) | unique `(project_id, name)`; immutable after use |
 | `environment` | explicit environment identity and descriptive metadata | unique `(identity_schema, fingerprint)` |
 | `revision` | source revision, parents, and optional native order metadata | unique `(source_id, revision_key)` |
 | `series` | exact comparison identity | unique fingerprint and natural identity |
@@ -114,6 +115,44 @@ SHA-256("benchmark-series-v4\0" + RFC-8785-canonical-JSON(identity))
 The canonical identity is the tuple from §1, assembled from the top-level project/source and the `series` object in §5.2; it never contains database row IDs. Environment contributes its identity schema and fingerprint, not descriptive metadata.
 
 The server computes fingerprints. Canonical source URIs, JSON canonicalization, number/string normalization, omitted values, and identity schema versions are part of the contract.
+
+### 4.4 Quantity vocabulary
+
+Quantities are an **open vocabulary**: wall time is not privileged, and the
+schema never enumerates what may be measured. A survey of existing harnesses
+and tracking systems shows the range one project may record — CPU, GPU, and
+wall time; three distinct memory semantics; hardware counters; throughput;
+energy and power; binary size and build time; quality scores. All of these are
+ordinary quantities here. Appendix A gives non-normative examples.
+
+A quantity declaration carries:
+
+- **`name`** — stable within the project, immutable once used. Distinct
+  measurement semantics require distinct names: bytes allocated per operation,
+  the size of a returned object, and peak process RSS are three quantities,
+  never one `memory`.
+- **`unit`** — the canonical UCUM unit (§3 rule 8). Counts are dimensionless
+  (`1`); rates use unit-per-time (`By/s`, `1/s`). Synthetic units are legal
+  but must be named as what they are: a simulator's weighted cycle estimate is
+  `estimated-cycles` in `1`, never seconds.
+- **`direction`** *(optional, descriptive)* — `lower-is-better`,
+  `higher-is-better`, or absent. Recorded because nearly every producer knows
+  it; excluded from identity and from any verdict (§3 rule 10).
+- **`deterministic`** *(optional, descriptive)* — declares that repetition
+  under fixed conditions reproduces the value exactly or nearly so, as with
+  simulated instruction counts or binary size. A single observation of a
+  deterministic quantity is complete evidence, not a weak sample.
+
+Two placement rules complete the picture:
+
+- **Percentiles are estimators, not quantities.** A tracked p99 latency is
+  quantity `latency` with estimator `p99` — one series per percentile — not a
+  minted `latency-p99` quantity.
+- **The same physical quantity may be a measurand or a condition.** CPU
+  frequency or temperature is a quantity when it is what the series estimates,
+  and observed context when it is a recorded condition of some other
+  measurement. Name and unit conventions are shared across both uses so a
+  value can move between them without translation.
 
 ## 5. Result contract
 
@@ -228,6 +267,8 @@ Absence of a row means the case was not reported. Detection excludes partial, ce
 - If observations exist and the estimator is server-computable, the server calculates the estimate. Otherwise it retains the producer estimate with `estimate_source = producer`.
 - `summaries` is an extensible list. Supported types include `statistic`, `confidence_interval`, `coverage_interval`, `source_bounds`, `standard_uncertainty`, and `expanded_uncertainty`. Each entry records the estimate/statistic addressed, source, method, and level or factor when applicable. Numeric summary values use the quantity's canonical unit unless explicitly dimensionless.
 - Observation standard deviation is a precision statistic, not automatically uncertainty of a mean or median. Unknown bounds stay `source_bounds`; labels such as `stat`, `sys`, `range`, or `error` retain source semantics.
+- A single harness invocation that reports several quantities — say wall time, GPU time, and peak memory — yields one result per quantity, each in its own series. The results share `run_key` (and fork/block/pair keys in procedure when replicates are paired), so cross-quantity analysis such as a CPU/GPU time ratio needs no first-class multi-metric result.
+- For a quantity declared deterministic (§4.4), one observation is complete evidence: dispersion summaries are not expected, and analyses must not treat the single replicate as an undersampled distribution.
 - `success` and `partial` require a finite estimate. `censored` requires a constraint containing a kind (`lower_bound`, `upper_bound`, or `interval`), finite bound(s), inclusivity, and cause. `error` and `skipped` have neither.
 - Inner-iteration and repetition sizes are positive; attempt/failure counts and durations are non-negative; interval lower bounds do not exceed upper bounds.
 - A series's source, case, and quantity belong to the same project. A result's series and revision refer to the same source. Series identity is immutable. Promoting an observed-context field into comparison identity requires an explicit mapping/fingerprint version change rather than silently rewriting history.
@@ -236,6 +277,36 @@ Absence of a row means the case was not reported. Detection excludes partial, ce
 - Large observation sets, covariance matrices, profiles, histograms, likelihoods, and similar specialist outputs are external artifacts with media type/schema, URI, and checksum.
 
 Physical partitioning and indexes are implementation choices. If PostgreSQL partitioning is used, global idempotency must still be enforced correctly.
+
+### 5.4 Ingest contract
+
+The ingest object (§5.2) is the message; how it travels is a deployment
+choice. Any transport implementing these semantics is conforming — the
+litmus test is **file drop**: writing result documents to a directory that
+something later sweeps into the store must be a valid delivery path. A
+canonical concrete transport binding is a deliberately deferred
+implementation decision.
+
+- **Acknowledgment means validated and durable.** A positive ingest response
+  promises the result passed validation, is stored, and is queryable. A
+  producer may forget a result once acknowledged.
+- **Entities auto-create; meaning is protected.** First sight of a project,
+  source, case, quantity, series, or revision creates it. A quantity arriving
+  with a unit different from its existing declaration is rejected as a unit
+  conflict — the immutability rule (§3 rule 11) is enforced here, not by
+  ceremony at declaration time.
+- **No ordering, no deadline.** Results may arrive late, duplicated, or out
+  of order; deferred delivery — an offline laptop, a weekly batch — is valid
+  indefinitely. Revision is the history axis; ingest time is provenance.
+- **Batches are transport optimizations.** A multi-result delivery is N
+  independent documents with N independent outcomes; there is no atomic
+  batch. Partial acceptance is normal and reported per result.
+- **Machine-readable rejection taxonomy.** At minimum: *malformed* (schema
+  validation failed), *idempotency conflict* (same `(producer, ingest_key)`,
+  different payload), *unit conflict*, *identity violation* (e.g. series and
+  revision from different sources), and *quarantined* (accepted but withheld
+  from analysis pending review). Each is distinct so producers can react
+  without parsing prose.
 
 ## 6. Migration contract
 
@@ -317,3 +388,38 @@ The result store also excludes alert policy, CI orchestration, source-code hashe
 - Harnesses: [Google Benchmark (`8b66b54`)](https://github.com/google/benchmark/blob/8b66b54f7e1bf6b25390dca1dea3f18a40e607f9/docs/user_guide.md), [pytest-benchmark (`47d66c8`)](https://github.com/ionelmc/pytest-benchmark/tree/47d66c88b84b5b11cc78e465cfc655d0a02de740), [JMH (`a194eea`)](https://github.com/openjdk/jmh/blob/a194eead0136bb66e5e59e4fdb2e18543e730929/jmh-core/src/main/java/org/openjdk/jmh/results/format/JSONResultFormat.java), [Criterion (`3dbc6c6`)](https://github.com/bheisler/criterion.rs/blob/3dbc6c618acb48885066422d81d50729aa17b2b7/book/src/cargo_criterion/external_tools.md), and [BenchmarkDotNet (`2365829`)](https://github.com/dotnet/BenchmarkDotNet/blob/2365829b82d95843e561f9ef666f4e9e86761d38/docs/articles/samples/IntroExportJson.md)
 
 Detailed audits are in `benchmark-result-schema-source-review.md` and `benchmark-result-schema-metrology-review.md`.
+
+## Appendix A: Example quantities (non-normative)
+
+Illustrations of the open vocabulary (§4.4), with canonical UCUM units. None
+of these names is required; projects declare what they measure. Sources
+observed recording each class are noted for orientation.
+
+| Name | Unit | Meaning | Notes |
+|---|---|---|---|
+| `wall-time` | `s` | elapsed real time | universal |
+| `cpu-time` | `s` | process CPU time | Google Benchmark default; hyperfine user/sys |
+| `gpu-time` | `s` | device-side time, synchronized | cupyx, torch benchmarks |
+| `latency` | `s` | per-request time; percentiles via estimators | vLLM, MLPerf server scenarios |
+| `time-to-first-token` | `s` | streaming first-response time | LLM inference |
+| `peak-rss` | `By` | peak process resident set size | ASV `peakmem_`, pyperf, rustc-perf `max-rss` |
+| `allocated-bytes` | `By` | bytes allocated per operation | JMH GC profiler, BenchmarkDotNet, Go `B/op` |
+| `allocations` | `1` | allocation count per operation | Go `allocs/op` |
+| `object-size` | `By` | size of a produced object | ASV `mem_` |
+| `gpu-peak-memory` | `By` | peak device memory | torch `max_memory_allocated` |
+| `instructions` | `1` | retired instructions; deterministic when simulated | rustc-perf default metric |
+| `cycles` | `1` | CPU cycles | noisier than instructions |
+| `estimated-cycles` | `1` | simulator-weighted cycles (synthetic) | CodSpeed, Cachegrind models |
+| `cache-misses` | `1` | cache misses, level named if specific | perf, JMH perfnorm |
+| `branch-misses` | `1` | branch mispredictions | perf, BenchmarkDotNet |
+| `page-faults` | `1` | page faults | perf, rustc-perf |
+| `throughput-bytes` | `By/s` | bytes processed per second | Google Benchmark, criterion |
+| `throughput-items` | `1/s` | items/operations per second | ops/s, tokens/s, IOPS |
+| `energy` | `J` | energy consumed | RAPL, Scaphandre |
+| `power` | `W` | average power draw | SPECpower, mobile benchmarks |
+| `cpu-frequency` | `MHz` | observed frequency; often observed context instead | pyperf metadata |
+| `temperature` | `Cel` | sensor temperature; often observed context instead | pyperf metadata |
+| `binary-size` | `By` | linked artifact size; deterministic | rustc-perf `size:*`, LNT, Chromium |
+| `build-time` | `s` | time to build the artifact | LNT, Bencher tutorials |
+| `compression-ratio` | `1` | output/input size ratio | zstd, lzbench |
+| `score` | `1` | quality metric paired with performance | LNT `score`, MLPerf accuracy |
