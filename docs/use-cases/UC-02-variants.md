@@ -1,14 +1,10 @@
-# Benchmark Use Case Template
-
----
-
 ## UC-02: Fixed branch and environment invariants
 
 | | |
 |---|---|
 | **Status** | draft |
 | **Owner** | MarcoGorelli |
-| **Last updated** | 2026-02-09 |
+| **Last updated** | 2026-09-03 |
 | **Related** | |
 
 ### 1. Summary
@@ -41,13 +37,14 @@ Motivation:
 
 Something like
 ```
-$ benchx run --compare-variants pandas_truncate.py polars_truncate.py dt_truncate
+$ benchx compare-variants --baseline pandas_truncate.py --variant polars_truncate.py --name dt_truncate --rounds 5
 
-role              benchmark_name   time    vs. baseline
-baseline          dt_truncate      1.20s   -
-variant           dt_truncate      1.24s   +3.3%   (within a 5% margin — OK)
+role              benchmark_name   time     vs. baseline
+baseline          dt_truncate      120 ns   -
+variant           dt_truncate      124 ns   +3.3%   (within a 5% margin — OK)
 ```
 
+After the rounds are run (interleaved), the minimum for each role is reported on.
 If the difference was greater than some threshold, say here 5%, this would be flagged as an error.
 It's up to the maintainers whether this blocks merge.
 
@@ -69,50 +66,49 @@ State for each:
 | Environment | controlled | |
 | Execution context | controlled | |
 
-- **Varying** - the independent variable; identifying fields must be present and
-  *distinct* across records being compared.
-- **Controlled** - must be present and *equal* across records being compared.
-- **Free** - genuinely irrelevant to the comparison's validity. Justify each one;
-  "free" is where invalid comparisons hide.
-
-Code identity varies within each run (we are comparing two functions). Code environment
-may vary across runs.
+Code identity varies within each run (we are comparing two functions). Everything else stays constant. Variant and baseline should be interleaved across multiple rounds per session so that per-session drift affects both roles equally.
 
 ### 6. Measurements
 
 | Measure | Instrument | Unit | Direction |
 |---|---|---|---|
-| wall time | pyperf | s | lower is better |
+| wall time | pyperf | ns | lower is better |
 | peak memory (optional) | memray | bytes | lower is better |
 
-- **Raw samples retained?** yes
+- **Raw samples retained?** yes.
 - **Is the instrument available in every environment this use case spans?**
   It should be, yes.
 
 ### 7. Comparison semantics
 
-- **What comparison is valid?** paired within each session
+- **What comparison is valid?** within each session, the minimum timing per role is compared.
 - **Estimator:** minimum is usually recommended
-- **What counts as a real difference?** A difference which exceeds a user-defined threshold.
-- **Expected noise floor** the difference between runs may vary across environments. But within
-  each environment, the invariant should hold.
+- **What counts as a real difference?** If `variant_timing > baseline_timing * (1+threshold)`
+- **Expected noise floor** this depends on the code being benchmarked, but `threshold` should be set to account for that.
 
 ### 8. Schema implications
 
 - **Profile:** new. fixed-branch-and-environment-invariants
 - **Fields required beyond the core:**
   - "role": {"variant", "baseline"}.
-  - "session_id": str
+  - `interleave_position`: obligatory (can't be null)
 - **Fields required to be *absent* or explicitly null:** none
 - **New fields not currently in the schema:**
-  - "role": Enum('variant', 'baseline'). Defined by who writes the benchmark.
-- **Comparability key:** same branch and environment.
-- **Validation invariants:** branch and environment.
+  - "role": Enum('variant', 'baseline'). Defined by the caller (`--baseline` / `--variant`).
+- **Comparability key:** same `session_id`, same `benchmark_name`, minimum timing across rounds.
+- **Validation invariants:**:
+  - For any `session_id` and `benchmark_name`, `role="baseline"` and `role="variant"` should have equal round counts.
+  - Both records share the same commit and environment.
+  - `interleave_position` must alternate between the roles.
 - **Conflicts with existing use cases:** other comparisons don't have "role".
 
 ### 9. Storage and lifecycle
 
-tbd
+Store roles, session_ids, and timings. Don't store the threshold, as that's a user-policy which may be varied as the user wishes.
+
+Volume storage scales as `2 x n_benchmarks x n_rounds`.
+
+Even though this use case is focused on within-session comparisons, users may still be interested in plotting numbers over time across revisions. Nonetheless, we defer details pertaining to that to a different use case.
 
 ### 10. Degenerate and failure modes
 
@@ -136,3 +132,7 @@ If either one fails to run, the benchmark should be deemed to have failed, as th
 Cross-branch or cross-environment comparisons.
 
 ### 12. Open questions
+
+- Do we need to monitor / capture something like thermal state? Or do we just accept it as noise?
+  Does interleaving address it?
+- How should these benchmarks be triggered? Per-commit, per-release, per-merge? This feels out-of-scope, the answer is best left to the user to determine.
