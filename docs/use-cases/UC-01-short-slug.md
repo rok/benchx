@@ -21,7 +21,7 @@ for varying array providers.
 ### 2. Motivation
 
 In this use case, there is no comparison across history, build or runtime environments
-or machines: the benchmark itself all necessary information via its parametrization.
+or machines: the benchmark contains itself all necessary information via its parametrization.
 
 There can be one or multiple parameters (problem size, execution mode, array provider);
 the benchmark may report one or multiple measurements (CPU time, peak memory).
