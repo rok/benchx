@@ -1,0 +1,154 @@
+{
+  "schema_uri": "urn:benchx:schema:measurement-result:0.1.0",
+  "measurement_id": "018f6f7e-4a17-7b2c-8d91-8c0b75c46f25",
+  "producer": {
+    "name": "example.org/benchmark-adapter",
+    "version": "1.2.0",
+    "mapping_version": "native-format/v1"
+  },
+  "ingest_key": "run-2025-02-14:read-table/snappy:wall-time",
+  "project": "example-project",
+  "coordinates": {
+    "workload": {
+      "name": "read-table",
+      "version": "2",
+      "parameters": {
+        "compression": "snappy",
+        "columns": 12
+      },
+      "dataset": {
+        "name": "generated-primitives",
+        "version": "2025-02",
+        "sha256": "07c913c56e82f5c91d3fb912703a86cbe9c9db60b094a31e66c548fec7f4e20f",
+        "parameters": {
+          "rows": 1000000,
+          "seed": 42
+        }
+      }
+    },
+    "subject": {
+      "name": "example-engine",
+      "version": "4.1.0",
+      "source": {
+        "uri": "https://example.org/example-engine.git",
+        "revision": "02addad7a1f3ce7d6de6a6230ec4c17828cb8f52",
+        "dirty": false
+      },
+      "configuration": {
+        "build_type": "release",
+        "compiler": "clang-18"
+      }
+    },
+    "environment": {
+      "identity_schema": "example.org/benchmark-host/v1",
+      "identity": {
+        "runner": "bench-01",
+        "cpu": "Example CPU",
+        "cores": 8
+      },
+      "label": "bare-metal-01"
+    },
+    "protocol": {
+      "name": "steady-clock-elapsed-time",
+      "version": "1",
+      "settings": {
+        "warmup_seconds": 1,
+        "repetitions": 5
+      }
+    }
+  },
+  "quantity": {
+    "name": "wall-time",
+    "unit": "s",
+    "direction": "lower-is-better",
+    "deterministic": false
+  },
+  "estimator": {
+    "name": "mean",
+    "parameters": {
+      "included_observations": 5
+    }
+  },
+  "outcome": {
+    "status": "success"
+  },
+  "evidence": {
+    "estimate": 0.03672,
+    "estimate_source": "producer",
+    "observations": [
+      0.0371,
+      {
+        "value": 0.0364,
+        "ordinal": 1,
+        "group": "measured",
+        "included": true,
+        "extensions": {
+          "example.org/clock": "steady"
+        }
+      },
+      0.0363,
+      0.037,
+      0.0368
+    ],
+    "summaries": [
+      {
+        "kind": "statistic",
+        "name": "sample_standard_deviation",
+        "value": 0.0003564,
+        "source": "producer",
+        "method": "n-1"
+      },
+      {
+        "kind": "confidence_interval",
+        "name": "mean",
+        "lower": 0.03628,
+        "upper": 0.03716,
+        "level": 0.95,
+        "source": "producer",
+        "method": "student-t",
+        "extensions": {
+          "example.org/degrees-of-freedom": 4
+        }
+      }
+    ],
+    "extensions": {
+      "example.org/native-time-unit": "ns"
+    }
+  },
+  "observed_context": {
+    "kernel": "6.8.0",
+    "temperature_celsius": 44.5
+  },
+  "procedure": {
+    "inner_iterations": 100,
+    "attempted_repetitions": 5
+  },
+  "artifacts": [
+    {
+      "uri": "https://bench.example.org/runs/run-2025-02-14/raw.json",
+      "media_type": "application/json",
+      "schema_uri": "https://example.org/schemas/native-result/v1",
+      "sha256": "123837404e1d0e264f777849b4a35fd6f308f04c79928da90f399c89d3088a88",
+      "role": "source-result",
+      "metadata": {
+        "compressed": false
+      }
+    }
+  ],
+  "provenance": {
+    "recorded_at": "2025-02-14T09:13:02.120000Z",
+    "started_at": "2025-02-14T09:12:44Z",
+    "ended_at": "2025-02-14T09:13:01Z",
+    "run_key": "run-2025-02-14",
+    "batch_key": "nightly-linux-x86_64",
+    "native_id": "read-table/snappy/repetition-set-1",
+    "source_payload_uri": "https://bench.example.org/runs/run-2025-02-14/raw.json",
+    "source_payload_sha256": "123837404e1d0e264f777849b4a35fd6f308f04c79928da90f399c89d3088a88",
+    "info": {
+      "imported_by": "scheduled-ingest"
+    }
+  },
+  "extensions": {
+    "example.org/experiment": "baseline"
+  }
+}

@@ -1,0 +1,724 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:benchx:schema:measurement-result:0.1.0",
+  "title": "BenchX measurement result",
+  "description": "One attempt to estimate one quantity for one workload and subject under declared conditions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_uri",
+    "measurement_id",
+    "producer",
+    "ingest_key",
+    "project",
+    "coordinates",
+    "quantity",
+    "estimator",
+    "outcome",
+    "provenance"
+  ],
+  "properties": {
+    "schema_uri": {
+      "type": "string",
+      "const": "urn:benchx:schema:measurement-result:0.1.0"
+    },
+    "measurement_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "producer": {
+      "$ref": "#/$defs/producer"
+    },
+    "ingest_key": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "project": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "coordinates": {
+      "$ref": "#/$defs/coordinates"
+    },
+    "quantity": {
+      "$ref": "#/$defs/quantity"
+    },
+    "estimator": {
+      "$ref": "#/$defs/estimator"
+    },
+    "outcome": {
+      "$ref": "#/$defs/outcome"
+    },
+    "evidence": {
+      "$ref": "#/$defs/evidence"
+    },
+    "observed_context": {
+      "$ref": "#/$defs/jsonObject"
+    },
+    "procedure": {
+      "$ref": "#/$defs/jsonObject"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "extensions": {
+      "$ref": "#/$defs/extensions"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "properties": {
+              "status": {
+                "enum": ["success", "partial"]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": ["evidence"],
+        "properties": {
+          "evidence": {
+            "required": ["estimate", "estimate_source"],
+            "not": {
+              "required": ["constraint"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "properties": {
+              "status": {
+                "const": "partial"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "required": ["reason"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "properties": {
+              "status": {
+                "const": "censored"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": ["evidence"],
+        "properties": {
+          "outcome": {
+            "required": ["reason"]
+          },
+          "evidence": {
+            "required": ["constraint"],
+            "not": {
+              "required": ["estimate"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "properties": {
+              "status": {
+                "enum": ["error", "skipped"]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "outcome": {
+            "required": ["reason"]
+          }
+        },
+        "not": {
+          "required": ["evidence"]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,6})?Z$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "jsonValue": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/jsonObject"
+        }
+      ]
+    },
+    "jsonObject": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/jsonValue"
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z][A-Za-z0-9+.-]*[:/].+$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/jsonValue"
+      }
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "mapping_version"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "version": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "mapping_version": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "coordinates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workload", "subject", "environment", "protocol"],
+      "properties": {
+        "workload": {
+          "$ref": "#/$defs/workload"
+        },
+        "subject": {
+          "$ref": "#/$defs/subject"
+        },
+        "environment": {
+          "$ref": "#/$defs/environment"
+        },
+        "protocol": {
+          "$ref": "#/$defs/protocol"
+        }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "version": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "parameters": {
+          "$ref": "#/$defs/jsonObject"
+        },
+        "dataset": {
+          "$ref": "#/$defs/dataset"
+        }
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "version": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "parameters": {
+          "$ref": "#/$defs/jsonObject"
+        }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "version": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "source": {
+          "$ref": "#/$defs/sourceRevision"
+        },
+        "configuration": {
+          "$ref": "#/$defs/jsonObject"
+        }
+      }
+    },
+    "sourceRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "revision"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "revision": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "dirty": {
+          "type": "boolean"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity_schema", "identity"],
+      "properties": {
+        "identity_schema": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "identity": {
+          "$ref": "#/$defs/jsonObject"
+        },
+        "label": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "version": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "settings": {
+          "$ref": "#/$defs/jsonObject"
+        }
+      }
+    },
+    "quantity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "unit"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "unit": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["lower-is-better", "higher-is-better"]
+        },
+        "deterministic": {
+          "type": "boolean"
+        }
+      }
+    },
+    "estimator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "parameters": {
+          "$ref": "#/$defs/jsonObject"
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["success", "partial", "censored", "error", "skipped"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+        },
+        "message": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "estimate": {
+          "type": "number"
+        },
+        "estimate_source": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "observations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/observation"
+          }
+        },
+        "summaries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/summary"
+          }
+        },
+        "constraint": {
+          "$ref": "#/$defs/constraint"
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "observation": {
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value"],
+          "properties": {
+            "value": {
+              "type": "number"
+            },
+            "ordinal": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "group": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "included": {
+              "type": "boolean"
+            },
+            "extensions": {
+              "$ref": "#/$defs/extensions"
+            }
+          }
+        }
+      ]
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "statistic",
+            "confidence_interval",
+            "coverage_interval",
+            "source_bounds",
+            "standard_uncertainty",
+            "expanded_uncertainty"
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "value": {
+          "type": "number"
+        },
+        "lower": {
+          "type": "number"
+        },
+        "upper": {
+          "type": "number"
+        },
+        "level": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "factor": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "source": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "method": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "statistic"
+              }
+            }
+          },
+          "then": {
+            "required": ["name", "value"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": ["confidence_interval", "coverage_interval"]
+              }
+            }
+          },
+          "then": {
+            "required": ["lower", "upper", "level"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "source_bounds"
+              }
+            }
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": ["lower"]
+              },
+              {
+                "required": ["upper"]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "standard_uncertainty"
+              }
+            }
+          },
+          "then": {
+            "required": ["value"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "expanded_uncertainty"
+              }
+            }
+          },
+          "then": {
+            "required": ["value", "factor"]
+          }
+        }
+      ]
+    },
+    "constraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "cause"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["lower_bound", "upper_bound", "interval"]
+        },
+        "lower": {
+          "type": "number"
+        },
+        "upper": {
+          "type": "number"
+        },
+        "lower_inclusive": {
+          "type": "boolean"
+        },
+        "upper_inclusive": {
+          "type": "boolean"
+        },
+        "cause": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "lower_bound"
+              }
+            }
+          },
+          "then": {
+            "required": ["lower"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "upper_bound"
+              }
+            }
+          },
+          "then": {
+            "required": ["upper"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "interval"
+              }
+            }
+          },
+          "then": {
+            "required": ["lower", "upper"]
+          }
+        }
+      ]
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "media_type"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "uri-reference"
+        },
+        "media_type": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "schema_uri": {
+          "type": "string",
+          "format": "uri-reference"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "role": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "metadata": {
+          "$ref": "#/$defs/jsonObject"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recorded_at"],
+      "properties": {
+        "recorded_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "started_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "run_key": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "batch_key": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "native_id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "source_payload_uri": {
+          "type": "string",
+          "format": "uri-reference"
+        },
+        "source_payload_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "info": {
+          "$ref": "#/$defs/jsonObject"
+        }
+      }
+    }
+  }
+}
