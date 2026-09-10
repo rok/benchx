@@ -133,7 +133,7 @@ possible ensures reliability.
 
 ### 9. Storage and lifecycle
 
-- **Volume:** records per invocation, invocations per day, per actor
+- **Volume:** 1 parametrized record per invocation
 - **Retention:** session-scoped, but see open question 2
 - **Location:** local working dir
 - **Does this data ever need to join against data from another use case?** No
