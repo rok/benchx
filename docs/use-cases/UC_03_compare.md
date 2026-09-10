@@ -111,7 +111,7 @@ possible ensures reliability.
 ### 7. Comparison semantics
 
 - **What comparison is valid?** paired
-- **Estimator:** median
+- **Estimator:** runner-dependent and stored - median, mean, or minimum, etc.
 - **What counts as a real difference?**: statistical tests, TBD, ensure the test is
   reproducible from the recorded statistics
 - **Expected noise floor**: runner-dependent, but A/A testing may be useful
