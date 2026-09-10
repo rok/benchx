@@ -112,11 +112,9 @@ possible ensures reliability.
 
 - **What comparison is valid?** paired
 - **Estimator:** median
-- **What counts as a real difference?**
-- **Expected noise floor**
-
-[TODO: do a deeper review of prior art / literature before specifying last two above.
- https://kar.kent.ac.uk/33611/ is interesting.]
+- **What counts as a real difference?**: statistical tests, TBD, ensure the test is
+  reproducible from the recorded statistics
+- **Expected noise floor**: runner-dependent, but A/A testing may be useful
 
 ### 8. Schema implications
 
@@ -126,7 +124,7 @@ possible ensures reliability.
 - **New fields not currently in the schema:**
   - **interleave position**: must be stored for each measurement.
     However, see open question 1.
-  - **ratio, ci_low, ci_high, classification** [TODO: dependent on section 7]
+  - **ratio, ci_low, ci_high, classification**
 - **Comparability key:** records must *differ* in the code version (the revision)
   and *agree* on everything under code identity.
 - **Validation invariants:** all records in a comparison share all of
