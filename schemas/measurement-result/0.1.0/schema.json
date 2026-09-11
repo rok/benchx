@@ -134,7 +134,14 @@
           "evidence": {
             "required": ["constraint"],
             "not": {
-              "required": ["estimate"]
+              "anyOf": [
+                {
+                  "required": ["estimate"]
+                },
+                {
+                  "required": ["estimate_source"]
+                }
+              ]
             }
           }
         }
@@ -534,7 +541,15 @@
             }
           },
           "then": {
-            "required": ["name", "value"]
+            "required": ["name", "value"],
+            "not": {
+              "anyOf": [
+                {"required": ["lower"]},
+                {"required": ["upper"]},
+                {"required": ["level"]},
+                {"required": ["factor"]}
+              ]
+            }
           }
         },
         {
@@ -546,7 +561,13 @@
             }
           },
           "then": {
-            "required": ["lower", "upper", "level"]
+            "required": ["lower", "upper", "level"],
+            "not": {
+              "anyOf": [
+                {"required": ["value"]},
+                {"required": ["factor"]}
+              ]
+            }
           }
         },
         {
@@ -558,12 +579,21 @@
             }
           },
           "then": {
-            "anyOf": [
+            "allOf": [
               {
-                "required": ["lower"]
+                "anyOf": [
+                  {"required": ["lower"]},
+                  {"required": ["upper"]}
+                ]
               },
               {
-                "required": ["upper"]
+                "not": {
+                  "anyOf": [
+                    {"required": ["value"]},
+                    {"required": ["level"]},
+                    {"required": ["factor"]}
+                  ]
+                }
               }
             ]
           }
@@ -577,7 +607,15 @@
             }
           },
           "then": {
-            "required": ["value"]
+            "required": ["value"],
+            "not": {
+              "anyOf": [
+                {"required": ["lower"]},
+                {"required": ["upper"]},
+                {"required": ["level"]},
+                {"required": ["factor"]}
+              ]
+            }
           }
         },
         {
@@ -589,7 +627,14 @@
             }
           },
           "then": {
-            "required": ["value", "factor"]
+            "required": ["value", "factor"],
+            "not": {
+              "anyOf": [
+                {"required": ["lower"]},
+                {"required": ["upper"]},
+                {"required": ["level"]}
+              ]
+            }
           }
         }
       ]
@@ -629,7 +674,13 @@
             }
           },
           "then": {
-            "required": ["lower"]
+            "required": ["lower"],
+            "not": {
+              "anyOf": [
+                {"required": ["upper"]},
+                {"required": ["upper_inclusive"]}
+              ]
+            }
           }
         },
         {
@@ -641,7 +692,13 @@
             }
           },
           "then": {
-            "required": ["upper"]
+            "required": ["upper"],
+            "not": {
+              "anyOf": [
+                {"required": ["lower"]},
+                {"required": ["lower_inclusive"]}
+              ]
+            }
           }
         },
         {
@@ -665,6 +722,7 @@
       "properties": {
         "uri": {
           "type": "string",
+          "minLength": 1,
           "format": "uri-reference"
         },
         "media_type": {
@@ -672,6 +730,7 @@
         },
         "schema_uri": {
           "type": "string",
+          "minLength": 1,
           "format": "uri-reference"
         },
         "sha256": {
@@ -710,6 +769,7 @@
         },
         "source_payload_uri": {
           "type": "string",
+          "minLength": 1,
           "format": "uri-reference"
         },
         "source_payload_sha256": {

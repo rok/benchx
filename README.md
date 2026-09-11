@@ -37,10 +37,10 @@ allow all of them.
   limitations.
 - [`schemas/measurement-result/`](schemas/measurement-result/) — versioned
   message schemas and conformance examples.
-- [`tools/measurement_arrow_schema.py`](tools/measurement_arrow_schema.py) —
-  static Arrow schema and derived construction-storage schema.
-- [`tools/measurement_arrow.py`](tools/measurement_arrow.py) — reference
-  message-to-Parquet converter.
+- [`tools/measurement_arrow.py`](tools/measurement_arrow.py) — static Arrow
+  schema, validated-message conversion, and Parquet writing.
+- [`tools/measurement_message_to_parquet.py`](tools/measurement_message_to_parquet.py)
+  — strict JSON validation and conversion CLI.
 - [`docs/use-cases/`](docs/use-cases/) — workflows that exercise the design.
 - [`docs/user_stories/`](docs/user_stories/) — user story template and collected
   stories.

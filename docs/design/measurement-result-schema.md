@@ -21,8 +21,8 @@ attempted belongs in a run manifest rather than this table.
 | Artifact | Purpose |
 |---|---|
 | [`schema.json`](../../schemas/measurement-result/0.1.0/schema.json) | JSON Schema 2020-12 validation for a measurement message. |
-| [`measurement_arrow_schema.py`](../../tools/measurement_arrow_schema.py) | Static PyArrow table schema and its derived construction schema. |
-| [`measurement_arrow.py`](../../tools/measurement_arrow.py) | Reference JSON-to-Arrow conversion and Parquet writer. |
+| [`measurement_arrow.py`](../../tools/measurement_arrow.py) | Static PyArrow schema, validated-message conversion, and Parquet writing. |
+| [`measurement_message_to_parquet.py`](../../tools/measurement_message_to_parquet.py) | Strict JSON validation and conversion CLI. |
 | [`success.json`](../../schemas/measurement-result/0.1.0/examples/success.json) | Example valid message. |
 
 The JSON Schema and Arrow schema are authored independently. The implementation
@@ -90,7 +90,7 @@ The JSON Schema enforces these combinations:
 |---|---|
 | `success` | `evidence.estimate` and `evidence.estimate_source` are required; `constraint` is forbidden. |
 | `partial` | Same evidence rules as `success`; `outcome.reason` is required. |
-| `censored` | `outcome.reason` and `evidence.constraint` are required; `estimate` is forbidden. |
+| `censored` | `outcome.reason` and `evidence.constraint` are required; `estimate` and `estimate_source` are forbidden. |
 | `error` | `outcome.reason` is required; `evidence` is forbidden. |
 | `skipped` | `outcome.reason` is required; `evidence` is forbidden. |
 
@@ -108,8 +108,9 @@ Evidence may contain:
 - a lower bound, upper bound, or interval `constraint` for censored outcomes;
 - namespaced extension values.
 
-The schema enforces the fields required by each summary and constraint kind. It
-does not currently enforce ordering between lower and upper bounds.
+The schema enforces required fields and rejects numeric fields that do not
+apply to a summary or constraint kind. It does not currently enforce ordering
+between lower and upper bounds.
 
 ### Open JSON values and extensions
 
@@ -171,28 +172,33 @@ struct fields. The same representation is used for heterogeneous observations.
 
 PyArrow cannot construct the nested `json_()` extension fields in this schema
 directly with `Table.from_pylist`. At import time,
-`measurement_arrow_schema.py` derives `MEASUREMENT_STORAGE_SCHEMA` by
-recursively replacing each `json_()` type with its UTF-8 storage type. The
-converter:
+`measurement_arrow.py` derives a private construction schema by recursively
+replacing each `json_()` type with its UTF-8 storage type. The converter:
 
 1. projects values by walking `MEASUREMENT_ARROW_SCHEMA`;
 2. parses timestamp strings into timezone-aware `datetime` values;
 3. serializes `json_()` values with RFC 8785;
-4. constructs a table with `MEASUREMENT_STORAGE_SCHEMA`;
+4. constructs a table with the private construction schema;
 5. casts the complete table to `MEASUREMENT_ARROW_SCHEMA`.
 
 The construction schema is an implementation detail. It does not define a
 second storage contract and is not inferred from message values.
 
-The public conversion functions are:
+`measurement_arrow.py` exposes:
 
 ```python
-message_to_arrow_table(message)
-messages_to_arrow_table(messages)
+validated_message_to_arrow_table(message)
+validated_messages_to_arrow_table(messages)
+write_validated_measurement_parquet(
+    message,
+    output,
+    message_schema_sha256=hash,
+)
 ```
 
-They expect already validated Python mappings. The command-line entry point
-performs strict JSON parsing and JSON Schema validation before calling them.
+These functions expect already validated Python mappings. The
+`measurement_message_to_parquet.py` command-line entry point performs strict
+JSON parsing and JSON Schema validation before calling the Parquet writer.
 
 ## Parquet output
 
