@@ -111,8 +111,8 @@
   "provenance": {
     "run_key": "ci.example.org/runs/ci-1234",
     "started_at": "2026-07-18T09:12:44Z",
-    "subject_dirty": false,
-    "benchmark_dirty": true,
+    "subject_dirty": "clean",
+    "benchmark_dirty": "dirty",
     "benchmark_patch_sha256": "5f3c1e8a9b2d4c6e7f0a1b3c5d7e9f2a4b6c8d0e1f3a5b7c9d2e4f6a8b0c1d3e",
     "runner": {"name": "example-runner", "version": "2.1"},
     "source_payload_sha256": "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b"

@@ -116,8 +116,8 @@
   "provenance": {
     "run_key": "ci.example.org/runs/nightly-778",
     "started_at": "2026-09-13T02:14:07Z",
-    "subject_dirty": false,
-    "benchmark_dirty": false,
+    "subject_dirty": "clean",
+    "benchmark_dirty": "clean",
     "runner": {"name": "example-gpu-runner", "version": "3.0"},
     "source_payload_sha256": "1c9e4f7a2b5d8e0f3a6c9b2d5e8f1a4c7b0d3e6f9a2c5b8d1e4f7a0c3b6d9e2f"
   }
