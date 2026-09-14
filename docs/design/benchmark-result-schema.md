@@ -141,7 +141,7 @@ Three rules resolve most cases:
 
 The top-level `source` is the authoritative axis. The subject component with role `primary` may omit its `source`; if present it must match, and a mismatch is an identity violation (§5.4). Non-primary components carry a source URI and pinned revision as fixed coordinates.
 
-A runner-level **probe** maps to a quantity plus the instrumentation used to acquire it: `GPUTimeProbe` might yield `gpu-time` via CUDA events, `OSSMemoryProbe` yield `peak-rss` via a named OS counter. Probe names are not a schema vocabulary.
+A runner-level **probe** maps to a quantity plus the instrumentation used to acquire it: `GPUTimeProbe` might yield `gpu-time` via CUDA events, `OSSMemoryProbe` yield `peak-rss` via a named OS counter. Probe names are not a schema vocabulary. Comparison context and procedure are open objects; Appendix B lists recommended keys so adapters spell the same warmup, calibration, timer, or cache strategy the same way and land in the same series.
 
 ### 4.3 Fingerprints
 
@@ -257,7 +257,7 @@ Absence of a row means the variant was not reported. Detectors exclude partial, 
         "timer": "perf_counter",
         "warmup": {"mode": "time", "seconds": 1},
         "calibration": {"mode": "adaptive", "minimum_sample_seconds": 0.01},
-        "filesystem_cache": "unchanged"
+        "filesystem_cache": "drop-before-attempt"
       }
     },
     "environment": {
@@ -294,7 +294,13 @@ Absence of a row means the variant was not reported. Detectors exclude partial, 
     ]
   },
   "observed_context": {"kernel": "6.8.0-31-generic", "glibc": "2.39"},
-  "procedure": {"inner_iterations": 100, "attempted_repetitions": 5, "completed_repetitions": 5, "warmups_performed": 1},
+  "procedure": {
+    "inner_iterations": 100,
+    "attempted_repetitions": 5,
+    "completed_repetitions": 5,
+    "warmups_performed": 1,
+    "caches_cleared": ["filesystem"]
+  },
   "provenance": {
     "run_key": "ci.example.org/runs/ci-1234",
     "started_at": "2026-07-18T09:12:44Z",
@@ -461,3 +467,28 @@ Illustrations of the open vocabulary (§4.4), with canonical UCUM units. None of
 | `build-time` | `s` | time to build the artifact | LNT, Bencher tutorials |
 | `compression-ratio` | `1` | output/input size ratio | zstd, lzbench |
 | `score` | `1` | quality metric paired with performance | LNT `score`, MLPerf accuracy |
+
+## Appendix B: Recommended protocol and procedure keys (non-normative)
+
+Comparison context and procedure are open objects (§4.2). These keys are recommended spellings for common acquisition settings so that adapters agree. Intended settings go under `comparison_context.protocol`; realized facts go under `procedure`; settings that change the artifact under test go under `subject.configuration`.
+
+| Key | Placement | Meaning | Example values |
+|---|---|---|---|
+| `protocol.name`, `protocol.version` | comparison context | Declared measurement protocol identity | `benchmark-time` / `v1` |
+| `protocol.timer` | comparison context | Clock or event source for a time quantity | `perf_counter`, `process_time`, `cuda-events`, `cuda-synchronize`, `rdtsc` |
+| `protocol.synchronization` | comparison context | Device synchronization before reading a timer | `none`, `stream`, `device` |
+| `protocol.warmup` | comparison context | Warmup policy | `{"mode": "none"}`, `{"mode": "repetitions", "n_warmup": 3}`, `{"mode": "time", "seconds": 1}` |
+| `protocol.calibration` | comparison context | How inner iterations are chosen | `{"mode": "adaptive", "minimum_sample_seconds": 0.01}`, `{"mode": "fixed", "inner_iterations": 100}` |
+| `protocol.repetitions` | comparison context | How many observations are requested | `{"mode": "fixed", "n_repeat": 10}`, `{"mode": "adaptive", "max_seconds": 5}` |
+| `protocol.filesystem_cache` | comparison context | Requested cache action | `unchanged`, `drop-before-attempt`, `drop-before-repetition` |
+| `protocol.gc` | comparison context | Garbage-collector policy during timing | `enabled`, `disabled`, `collect-before-repetition` |
+| `protocol.probe` | comparison context | Instrumentation for a non-time quantity | `{"name": "OSSMemoryProbe", "counter": "rss", "sampling_ms": 10}` |
+| `configuration.execution_mode` | subject descriptor | JIT versus ahead-of-time execution of the subject | `jit`, `aot` |
+| `inner_iterations` | procedure | Inner iterations actually used per observation | `100` |
+| `attempted_repetitions`, `completed_repetitions` | procedure | Observations requested and obtained | `5`, `5` |
+| `warmups_performed` | procedure | Warmup repetitions actually run | `1` |
+| `caches_cleared` | procedure | Caches actually dropped, in order | `["filesystem"]`, `["filesystem", "cuda-jit"]` |
+| `order` | procedure | Execution order across variants in the attempt's run | `sequential`, `interleaved`, `randomized` |
+| `duration_seconds` | procedure | Wall time spent on the attempt including warmup | `2.31` |
+
+A `pedantic` harness mode is `calibration.mode: fixed` plus `repetitions.mode: fixed`; an `adaptive` mode is `calibration.mode: adaptive` with the minimum sample duration it enforces. Changing any `protocol` value creates a new series under the default identity policy; changing a `procedure` value never does.

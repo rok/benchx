@@ -53,7 +53,7 @@
         "timer": "perf_counter",
         "warmup": {"mode": "time", "seconds": 1},
         "calibration": {"mode": "adaptive", "minimum_sample_seconds": 0.01},
-        "filesystem_cache": "unchanged"
+        "filesystem_cache": "drop-before-attempt"
       }
     },
     "environment": {
@@ -105,7 +105,8 @@
     "inner_iterations": 100,
     "attempted_repetitions": 5,
     "completed_repetitions": 5,
-    "warmups_performed": 1
+    "warmups_performed": 1,
+    "caches_cleared": ["filesystem"]
   },
   "provenance": {
     "run_key": "ci.example.org/runs/ci-1234",

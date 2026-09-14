@@ -238,7 +238,16 @@
         "attempted_repetitions": { "type": "integer", "minimum": 1 },
         "completed_repetitions": { "type": "integer", "minimum": 0 },
         "warmups_performed": { "type": "integer", "minimum": 0 },
-        "duration_seconds": { "type": "number", "minimum": 0 }
+        "duration_seconds": { "type": "number", "minimum": 0 },
+        "caches_cleared": {
+          "description": "Caches actually dropped during the attempt, in order.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/token" }
+        },
+        "order": {
+          "description": "Execution order across variants in the run.",
+          "$ref": "#/$defs/token"
+        }
       }
     },
     "provenance": {
