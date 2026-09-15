@@ -2,7 +2,7 @@
 
 **Status:** Minimal draft incorporating source, metrology, and design-partner review<br>
 **Companion to:** *A Continuous Benchmarking Framework: Benchmark Result Definition and Storage Schema*<br>
-**Author:** Rok Mihevc<br>
+**Author:** Rok Mihevc
 **Review date:** 2026-09-11
 
 ## 1. Purpose
