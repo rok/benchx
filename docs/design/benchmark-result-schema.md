@@ -1,8 +1,9 @@
 # Benchmark Measurement Result Schema and Migration Contract
 
-**Status:** Minimal draft incorporating source, metrology, and design-partner review<br>
-**Companion to:** *A Continuous Benchmarking Framework: Benchmark Result Definition and Storage Schema*<br>
+**Status:** Minimal draft incorporating source, metrology, and design-partner review
+
 **Author:** Rok Mihevc
+
 **Review date:** 2026-09-11
 
 ## 1. Purpose
@@ -55,10 +56,10 @@ The common operations are to find a series, order its results by revision, plot 
 | **Estimator** | Rule producing a scalar estimate, such as mean, median, minimum, slope, a percentile, a function of several input quantities, or a source-defined value. Selected by policy as a series projection; reported only inside estimate summaries, never as a coordinate. |
 | **Reported coordinates** | Producer-reported facts describing what was measured and under which conditions, fingerprinted before any policy is applied. |
 | **Comparison identity** | Policy projection of reported coordinates that must match for comparison. |
-| **Series** | Derived comparison-time construct: one comparison identity × one estimator under one identity-policy schema. Materialized as an index; never declared by producers. |
+| **Series** | Derived comparison-time construct: one comparison identity × one estimator under one identity-policy schema. It exists from its first point; a comparison between points is a separate document (§5.5). Materialized as an index; never declared by producers. |
 | **Observation** | One measured value produced by a repetition after declared normalization. |
 | **Observation batch** | Observations of one quantity from one attempt. Three repetitions producing 1.0 ms, 1.1 ms, and 1.0 ms are three observations in one batch. |
-| **Estimate** | Scalar used for plots and analysis; not a known “true value.” Producer estimates are typed summaries on the immutable result; derived estimates are series points. |
+| **Estimate** | Scalar produced by applying an estimator to an observation batch, used for plots and analysis; not a known “true value.” Producer estimates are typed summaries on the immutable result; derived estimates are series points. |
 | **Statistic** | Numeric summary computed from observations, such as a mean, median, percentile, or standard deviation. |
 | **Precision statistic** | Statistic describing observation dispersion, such as standard deviation, MAD, or IQR. |
 | **Measurement uncertainty** | Uncertainty associated with an estimate. It is not synonymous with error or observation spread. |
@@ -103,7 +104,7 @@ In metrology, the quantity intended for a workload variant at a revision is the 
 
 A `revision` row is keyed by the clean VCS identifier. Whether the measured checkout had uncommitted changes is a fact about the result: `subject_dirty` and `benchmark_dirty` are required tri-state flags, `clean`, `dirty`, or `unknown`, with an optional patch digest, all in provenance. A clean and a dirty result at the same commit therefore share a revision row. `unknown` is distinct from `clean` so that a comparator can tell what is known to be clean. Detectors exclude results not marked `clean` by default because the revision key alone does not identify the measured code. Comparators may still compare dirty sides within one run, as a contributor does with an uncommitted change against HEAD; such a comparison is *local-only* and never promotes into tracked history (§5.5).
 
-**Thin local results.** An ad hoc run on a laptop (UC-01, one-off stories) may have no benchmark repository and no project. `project` and `benchmark` are therefore optional, and environment identity may use the `local/v1` schema with only a hostname. Such a result is *thin*: it validates and can be compared within its own run. On ingest the store assigns it the implicit project `local/<hostname>` so that its vocabulary rows exist, and it joins a tracked project's series only after an approved mapping re-projects it with the missing coordinates (§6).
+**Thin local results.** An ad hoc run on a laptop (UC-01, one-off stories) may have no benchmark repository and no project. `project` and `benchmark` are therefore optional, and environment identity may use the `local/v1` schema with only a hostname. Such a result is *thin*: it validates and can be compared within its own run. On ingest the store assigns it the implicit project `local/<hostname>` so that its vocabulary rows exist, and it joins a tracked project's series only after an approved mapping re-projects it with the missing coordinates (§6). When the logic under test lives in the benchmark scripts themselves, as in a Narwhals overhead study, the script repository is the subject: `source` names it, and `benchmark` either names the same source or is omitted.
 
 `benchmark_result` stores coordinates exactly as reported plus their fingerprint, `attempt_key`, the outcome, observed context, observation batch, producer summaries, procedure, quality, and provenance as validated JSON. All of it is immutable after ingest. Promote a JSON structure to a child table only when a concrete query, size, or integrity requirement justifies it. No core tables exist for estimator, unit, procedure, run/attempt, observation, interval, uncertainty component, covariance, revision order, or aliases; estimator and unit vocabularies are configuration.
 
@@ -120,6 +121,8 @@ A composite subject keeps the axis explicit and pins every non-primary component
   ]
 }
 ```
+
+A Narwhals-over-pandas-or-Polars study has the same shape: `narwhals` is the primary component and axis, `pandas` and `polars` are pinned components with their versions, and a study that instead follows pandas releases designates pandas as primary and pins Narwhals, which is a different series.
 
 ### 4.2 Field placement
 
@@ -417,7 +420,7 @@ After accepting the Arrow message above, the server may materialize points such 
 - Pairing across attempts, such as interleaved baseline and contender runs (UC-03), is expressed by matching `procedure.round` on the attempts and matching pair keys on structured observations. `round` is assigned by the run author, increases monotonically within a run, and is kept by a retry, which gets a new attempt key but the same round so that pairing survives. It is never placed in comparison context, which would split the series.
 - `provenance.started_at` is required on every result. It is the measurement start on the producer's clock and the only fact that orders attempts across runs; ingest time is never used for ordering.
 - Ratios, confidence bounds, and faster/slower classifications produced by a comparison are a separate comparison document, not fields of a result; the comparator design specifies it.
-- An expected ground-truth value belongs to workload dataset metadata or an artifact; an error norm or mismatch count derived from it is another quantity; a harness-observed correctness check is recorded as `quality.validation.correctness` (`pass` or `fail`), and the verdict that acts on it is decision policy. A full dependency manifest is a provenance artifact; only the components policy treats as identity are pinned in the subject descriptor.
+- Ground-truth values never leave the runner. What is recorded is what the runner derived from them: an error norm or mismatch count as another quantity under the same attempt, and the observed check as `quality.validation.correctness` (`pass` or `fail`). The verdict that acts on it is decision policy. A full dependency manifest is a provenance artifact; only the components policy treats as identity are pinned in the subject descriptor.
 - A result's designated source, workload variant, and quantity belong to one project, and its subject revision refers to its designated source.
 - Large observation sets, covariance matrices, profiles, histograms, and similar outputs are external artifacts with media type, URI, and checksum. Migrations retain mapping version and source payload reference.
 
@@ -446,6 +449,8 @@ Results carry facts; a **profile** is a comparator-time check that a set of resu
 | `cross-machine` (template example, pending a use case) | environment identity | subject revision, workload variant, subject configuration | each side references an anchor result from the same run via `provenance.references` |
 
 A comparison in which any side is not `clean` is **local-only**: the comparator produces it, labels it so, and never promotes it into tracked history. This serves a contributor comparing an uncommitted change against HEAD (one-off stories, Arrow local); the CI path of UC-03 rejects dirty sides by its own policy. Thin results (§4.1) may claim `single-run`, `variants`, and `revisions` within their own run; the other profiles require a full environment identity.
+
+A revision may hold several attempts with identical coordinates, since every attempt is its own point, so viewers and comparators must expect more than one result per coordinates and revision. A comparison document therefore lists the `(producer, ingest_key)` of every result it consumed. That is also what lets a saved baseline be reused by reference instead of re-measured (Arrow local story).
 
 A trend over ad hoc attempts, ordered by run and `round` and then by `started_at`, is likewise built by the comparator under a local policy from the stored facts. The store never materializes such a series: `series` and `series_point` follow the revision axis only, and no timestamp or counter in a result implies code identity.
 
@@ -563,7 +568,7 @@ Comparison context and procedure are open objects (§4.2). These keys are recomm
 | `protocol.timer` | comparison context | Clock or event source for a time quantity | `perf_counter`, `process_time`, `cuda-events`, `cuda-synchronize`, `rdtsc` |
 | `protocol.synchronization` | comparison context | Device synchronization before reading a timer | `none`, `stream`, `device` |
 | `protocol.warmup` | comparison context | Warmup policy | `{"mode": "none"}`, `{"mode": "repetitions", "n_warmup": 3}`, `{"mode": "time", "seconds": 1}` |
-| `protocol.calibration` | comparison context | How inner iterations are chosen | `{"mode": "adaptive", "minimum_sample_seconds": 0.01}`, `{"mode": "fixed", "inner_iterations": 100}` |
+| `protocol.calibration` | comparison context | How inner iterations are chosen; an adaptive target may be a compound of several quantities | `{"mode": "adaptive", "minimum_sample_seconds": 0.01}`, `{"mode": "adaptive", "minimum_sample_seconds": 0.01, "target": "max(cpu-time, gpu-time)"}`, `{"mode": "fixed", "inner_iterations": 100}` |
 | `protocol.repetitions` | comparison context | How many observations are requested | `{"mode": "fixed", "n_repeat": 10}`, `{"mode": "adaptive", "max_seconds": 5}` |
 | `protocol.filesystem_cache` | comparison context | Requested cache action | `unchanged`, `drop-before-attempt`, `drop-before-repetition` |
 | `protocol.gc` | comparison context | Garbage-collector policy during timing | `enabled`, `disabled`, `collect-before-repetition` |
