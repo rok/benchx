@@ -47,7 +47,7 @@ The translating half cannot know where the native output came from. The runner, 
 | `started_at` | `provenance.started_at` | runner; the harness's own timestamp is a fallback |
 | `parameter_rules` | governs §4.3 | project configuration, optional |
 
-The adapter merges the context document with harness-reported values field by field. When both report the same fact, the runner's value wins for identity fields and the harness's value is kept in `provenance.info` for audit. Google Benchmark's `host_name` never becomes environment identity, because the runner's identity schema decides what identity is.
+The adapter merges the context document with harness-reported values field by field. When both report the same fact, the runner's value wins for identity fields and the harness's value is kept in `provenance.info` for audit. Google Benchmark's `host_name` never becomes environment identity, because the runner's identity schema decides what identity is. The merge is typed and per field, never a dictionary overlay: harness parameters live in `workload.parameters` and cannot collide with a schema field, so a benchmark parameter named `name` or `source` is just a parameter. An adapter does not autodetect machine identity itself, and it never fills a field it cannot know with a placeholder value; the field is absent, `unknown`, or the result is thin.
 
 A minimal context for a local `timeit` run is a source, a revision, dirty and tree state, a hostname environment, a run key, and an attempt key. That is enough for a valid thin result.
 
@@ -55,7 +55,7 @@ A minimal context for a local `timeit` run is a source, a revision, dirty and tr
 
 ### 4.1 Output
 
-One ingest object per attempt and quantity, each validating against `schemas/measurement-result/0.1.0/schema.json` before it leaves the adapter. Documents are written as separate files named by their `ingest_key` with `/` and `:` replaced, so a directory of adapter output is a valid file-drop delivery (schema §5.4) and sorts by key. An adapter that cannot produce a valid document for a case emits an `error` result for that case with reason `adapter.mapping-failed` and the native fragment in `provenance.info`; it never drops the case.
+One ingest object per attempt and quantity, each validating against `schemas/measurement-result/0.1.0/schema.json` before it leaves the adapter. Documents are written as separate files named by their `ingest_key` with `/` and `:` replaced, so a directory of adapter output is a valid file-drop delivery (schema §5.4) and sorts by key. An adapter that cannot produce a valid document for a case emits an `error` result for that case with reason `adapter.mapping-failed` and the native fragment in `provenance.info`; it never drops the case, and it never emits a document that fails validation with only a warning attached.
 
 ### 4.2 Quantities and units
 
@@ -67,7 +67,7 @@ The workload name is the harness's case name. Parameters come from structured na
 
 ### 4.4 Observations and summaries
 
-Per-repetition rows become the observation batch, one value per repetition in the canonical unit after the harness's own normalization, which the adapter records under `procedure` (inner iterations, warmups performed) and `protocol` (calibration mode). When the harness reports per-repetition metadata, observations are structured objects carrying `ordinal` and any group or pair key. Harness aggregates map to typed summaries with `source: "producer"`: a mean or median to an `estimate` with the harness's estimator declared by name and method version, standard deviation or MAD to `statistic`, a reported confidence interval to `confidence_interval` with its level, opaque bounds such as `stat`/`sys` to `source_bounds`. An adapter never computes a statistic the harness did not report; the server derives what policy needs.
+Per-repetition rows become the observation batch, one value per repetition in the canonical unit after the harness's own normalization, which the adapter records under `procedure` (inner iterations, warmups performed) and `protocol` (calibration mode). When the harness reports per-repetition metadata, observations are structured objects carrying `ordinal` and any group or pair key. Harness aggregates map to typed summaries with `source: "producer"`: a mean or median to an `estimate` with the harness's estimator declared by name and method version, standard deviation or MAD to `statistic`, a reported confidence interval to `confidence_interval` with its level, opaque bounds such as `stat`/`sys` to `source_bounds`. An adapter never computes a statistic the harness did not report; the server derives what policy needs. Observations are always finite: a repetition that produced no value is not a `null` placeholder in the batch but a smaller batch with `procedure.completed_repetitions` below `attempted_repetitions` and status `partial`. Inner iterations per observation and the repetition count are two different numbers and are never conflated into one `iterations` field.
 
 ### 4.5 Statuses
 
@@ -79,13 +79,18 @@ Per-repetition rows become the observation batch, one value per repetition in th
 | harness error, crash, or non-zero exit for the case | `error` | harness reason or `harness.error` |
 | harness skipped the case explicitly | `skipped` | harness reason or `harness.skipped` |
 | case in the work order, absent from output | `error` | `harness.no-output`, emitted by the driving half |
+| harness marks the case as not applicable, such as ASV's `NaN` for an invalid parameter combination | `skipped` | harness reason or `harness.not-applicable` |
+
+A case is never dropped by a `continue` in the mapping code. Every native row and every ordered case ends as exactly one result per quantity.
 
 ### 4.6 Keys
 
 - `producer.name` is a stable namespaced adapter identity, such as `benchx/gbench-adapter`; `producer.version` is its software version; `mapping_version` its rule set.
 - `ingest_key` is `<run_key>:<workload>/<parameters>:<quantity>` plus the attempt discriminator when a run holds several attempts of one variant. It is unique per producer and stable across re-runs of the translation.
 - `attempt_key` is taken from the context document. When the driving half runs the harness it mints one per invocation; when translating a native file that already carries an attempt identifier with known semantics, it preserves that; otherwise it mints a distinct key per case rather than guessing that results were measured together (schema §6).
-- `run_key`, `labels`, and `round` pass through untouched.
+- `run_key`, `labels`, and `round` pass through untouched, and are identical on every result the adapter emits for one native output.
+- Each catalog entry states what its `attempt_key` groups. It is always one execution of one workload variant; grouping across variants, such as "all parameter values of one benchmark" or "one suite file", is `batch_key`, which is provenance and never used for pairing.
+- `started_at` is the measurement start reported by the harness or the context document, never the time the adapter constructed the document.
 
 ### 4.7 Compound outputs
 
@@ -98,7 +103,7 @@ The driving half is a thin shell around one harness binary or entry point:
 1. **Scope.** Translate the work order's case filters into the harness's filter syntax, such as `--benchmark_filter=<regex>` or pytest `-k`.
 2. **Precision.** Translate requested repetitions, minimum time, and warmup into harness flags, and record the requested values under `protocol` so intended settings are comparison context. What the harness actually did is read back from its output into `procedure`.
 3. **Environment.** Apply nothing itself. Thread caps, pinning, and device selection are the runner's environment policy; the driving half only passes through environment variables the policy set and records the harness's view of them.
-4. **Run.** Invoke the harness with machine-readable output enabled, a per-attempt `attempt_key`, and a time limit. Capture stdout, stderr, exit status, and the native output file into provenance artifacts.
+4. **Run.** Invoke the harness with machine-readable output enabled, a per-attempt `attempt_key`, and a time limit. Capture stdout, stderr, exit status, and the native output file into provenance artifacts. A non-zero exit does not abort translation: whatever native output exists is translated, and the exit status becomes the reason on the results that lack output.
 5. **Account.** Compare cases in the work order with cases in the output and emit `error` results with `harness.no-output` for the difference, so a truncated run never looks like a shorter suite.
 
 The driving half never edits native output. Translation runs on the captured file so that the same file can be re-translated later under a newer mapping version.
@@ -126,6 +131,8 @@ The first adapters follow the schema's §6.2 mappings. Each entry names the nati
 | `context.date` | `started_at` fallback |
 | `context.executable`, `library_build_type` | `provenance.info`; build type belongs in the subject configuration the runner supplies |
 
+Attempt key: one per `run_name` row group, that is per encoded case; `batch_key` may group the cases of one binary. Aggregate rows are kept as producer summaries, not discarded.
+
 ### 6.2 pytest-benchmark
 
 Round data (`stats.data` with `--benchmark-json`) becomes observations; `params` become parameters; `options.min_rounds`, `min_time`, `max_time`, `warmup` go to `protocol` as requested settings and `stats.rounds`, `iterations`, `warmup` performed go to `procedure`; `stats.min/mean/median/stddev/iqr` become producer summaries; `machine_info` and `commit_info` are audit only, superseded by the context document.
@@ -152,14 +159,36 @@ Every adapter ships:
 - **Attempt integrity:** sibling results from one native row agree on every field schema §5.3 lists.
 - **Mapping changelog:** each `mapping_version` documents what changed and whether re-translation of old native files is recommended.
 
-## 8. Boundaries
+## 8. Prior art: Conbench's `benchadapt`
+
+Conbench ships the closest existing design: a `BenchmarkAdapter` base class that runs a command, transforms native output into `BenchmarkResult` records, and posts them, with Google Benchmark, Archery, ASV, and Folly implementations. Several of its choices are the reason for rules above.
+
+| Conbench behaviour | Consequence | Rule here |
+|---|---|---|
+| One class runs the harness, transforms, and posts; `subprocess.run(check=True)` aborts on a non-zero exit | a crashing suite loses every result that did complete | driving and translating halves; translation always runs on captured output (§5) |
+| Runtime metadata injected through `result_fields_override` and `result_fields_append`, a shallow dictionary overlay | a parameter named `name` clobbers the benchmark name, so the ASV adapter renames it `name_`; overrides replace whole dictionaries silently | typed context document with per-field precedence; parameters in their own object (§3) |
+| Identity is one untyped `tags` dictionary: name, parameters, `suite`, `source`, plus anything appended | any stray tag splits history; Google Benchmark parameters land as one opaque string `"32768/0"` | parameters, comparison context, observed context, and provenance are separate destinations; parsing only under declared rules (§4.3) |
+| `batch_id` means a benchmark name in one adapter, a suite in another, a file in a third | no consumer can rely on what a batch groups | `attempt_key` is always one execution of one variant; wider grouping is `batch_key` and each adapter states what it groups (§4.6) |
+| Aggregate rows are dropped, and the server recomputes mean, median, min, max, standard deviation, and IQR from samples, letting its own value win on conflict | producer statistics vanish; single-sample results with aggregates are "inconsistent" and partly ignored | producer summaries are kept and typed; the store derives points beside them and warns on discrepancy, never overwrites (§4.4) |
+| One `iterations` field means micro-benchmark loop count in some clients and sample count in others, resolved by special cases on the server | ambiguity that had to be documented as legacy | inner iterations and repetitions are distinct procedure fields (§4.4) |
+| A `null` inside `stats.data` marks the whole result as errored with a generated message | partial evidence is discarded as failure | finite observations only; missing repetitions shrink the batch and set `partial` (§4.4, §4.5) |
+| The ASV adapter skips `NaN` results and unknown benchmarks with `continue` | cases vanish from the store instead of appearing as skipped | every case ends as a result; `NaN` is `skipped` (§4.5) |
+| `machine_info` is autodetected in the adapter from `platform.node()`, `lscpu`, and `nvidia-smi`, with an environment variable to pin the host name; required fields the ASV adapter cannot supply are filled with `0` and `"x"` | identity depends on where the adapter ran, and mandatory fields produce fabricated values | identity comes from the runner's environment policy; unknown is `unknown` or absent, never a placeholder (§3) |
+| `timestamp` defaults to the time the result object was constructed | measurement time and translation time are conflated | `started_at` is measurement start (§4.6) |
+| No idempotency key; results are posted one by one with a single retry, and a duplicate POST creates a duplicate result | retries are unsafe and partial delivery is undetectable | deterministic `ingest_key`; file drop is the delivery path (§4.1, §4.6) |
+| `to_publishable_dict` warns "not publishable" and posts anyway | invalid results reach the server | no document leaves the adapter unless it validates (§4.1) |
+| `run_name`, `run_reason`, and `run_tags` are assumed consistent across a run "with no technical enforcement" | consumers cannot rely on the assumption | run-level fields are identical on every result of one output (§4.6); the store enforces attempt integrity |
+
+Two Conbench choices are kept deliberately. Free-form `optional_benchmark_info` and `validation` map to `provenance.info` and `quality.validation`. And its rule that a result without a commit is "not considered for time series analysis" is the ancestor of thin results and the local-only comparison.
+
+## 9. Boundaries
 
 - **Not the runner:** does not build, prepare environments, or choose what runs.
 - **Not the store:** computes no fingerprints, no series, no continuity; the ingest object it emits carries reported coordinates only.
 - **Not the comparator:** emits no verdicts and derives no compounds.
 - **Not an importer:** importers reuse the translating half on historical exports, adding the migration contract's thin-identity bookkeeping (schema §6); the adapter itself handles one harness's live output.
 
-## 9. Open questions
+## 10. Open questions
 
 1. Should `parameter_rules` live in the work order, in project configuration, or beside the benchmark suite in the subject repository? The last keeps rules versioned with the names they parse.
 2. When a harness reports an aggregate the schema types differently from the harness's own definition, such as Google Benchmark's `cv`, is a `statistic` with the harness's name sufficient, or does the schema need a coefficient-of-variation summary type?
