@@ -25,8 +25,14 @@
     "subject": {
       "name": "pandas",
       "components": [
-        {"role": "primary"},
-        {"role": "numpy", "source": "https://github.com/numpy/numpy", "revision": "v2.0.0"}
+        {
+          "role": "primary"
+        },
+        {
+          "role": "numpy",
+          "source": "https://github.com/numpy/numpy",
+          "revision": "v2.0.0"
+        }
       ]
     },
     "quantity": {
@@ -39,9 +45,18 @@
         "name": "timeit",
         "version": "v1",
         "timer": "perf_counter",
-        "warmup": {"mode": "repetitions", "n_warmup": 1},
-        "calibration": {"mode": "adaptive", "minimum_sample_seconds": 0.2},
-        "repetitions": {"mode": "fixed", "n_repeat": 5}
+        "warmup": {
+          "mode": "repetitions",
+          "n_warmup": 1
+        },
+        "calibration": {
+          "mode": "adaptive",
+          "minimum_sample_seconds": 0.2
+        },
+        "repetitions": {
+          "mode": "fixed",
+          "n_repeat": 5
+        }
       }
     },
     "environment": {
@@ -53,7 +68,13 @@
   },
   "measurement": {
     "status": "success",
-    "observations": [0.000131, 0.000129, 0.000133, 0.000130, 0.000128]
+    "observations": [
+      0.000131,
+      0.000129,
+      0.000133,
+      0.00013,
+      0.000128
+    ]
   },
   "procedure": {
     "inner_iterations": 2000,
@@ -67,7 +88,10 @@
     "run_key": "urn:uuid:3f1d2c4b-8a9e-4f60-b1c2-d3e4f5a6b7c8",
     "started_at": "2026-09-14T10:02:31Z",
     "subject_dirty": "dirty",
+    "subject_tree": "e7a1c3d5b7f9a1c3e5b7d9f1a3c5e7b9d1f3a5c7",
     "benchmark_dirty": "unknown",
-    "labels": {"env": "numpy-2.0"}
+    "labels": {
+      "env": "numpy-2.0"
+    }
   }
 }

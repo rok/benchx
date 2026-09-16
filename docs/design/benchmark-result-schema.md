@@ -102,7 +102,15 @@ In metrology, the quantity intended for a workload variant at a revision is the 
 
 `source` and `revision` serve both subject and benchmark code. A revision key has no intrinsic order: history queries take ancestry from the source repository or an auxiliary revision catalog keyed by `(source_id, revision_key)`; without either, results stay queryable but revision order and ancestor-based baselines are unavailable. Parent hashes are not copied into results.
 
-A `revision` row is keyed by the clean VCS identifier. Whether the measured checkout had uncommitted changes is a fact about the result: `subject_dirty` and `benchmark_dirty` are required tri-state flags, `clean`, `dirty`, or `unknown`, with an optional patch digest, all in provenance. A clean and a dirty result at the same commit therefore share a revision row. `unknown` is distinct from `clean` so that a comparator can tell what is known to be clean. Detectors exclude results not marked `clean` by default because the revision key alone does not identify the measured code. Comparators may still compare dirty sides within one run, as a contributor does with an uncommitted change against HEAD; such a comparison is *local-only* and never promotes into tracked history (§5.5).
+A `revision` row is keyed by the clean VCS identifier. Whether the measured checkout had uncommitted changes is a fact about the result: `subject_dirty` and `benchmark_dirty` are required tri-state flags, `clean`, `dirty`, or `unknown`, in provenance. A clean and a dirty result at the same commit therefore share a revision row. `unknown` is distinct from `clean` so that a comparator can tell what is known to be clean. Detectors exclude results not marked `clean` by default because the revision key alone does not place the result on the history axis. Comparators may still compare dirty sides within one run, as a contributor does with an uncommitted change against HEAD; such a comparison is *local-only* and never promotes into tracked history (§5.5).
+
+**Working-tree identity.** A result also records `subject_tree` and `benchmark_tree`: the content hash of the checkout that was measured, independent of its commit. For git this is the tree object id of the working tree, obtained by staging everything into a temporary index and writing a tree, so tracked and untracked files count and gitignored files do not:
+
+```sh
+GIT_INDEX_FILE=$(mktemp) sh -c 'git add -A && git write-tree'
+```
+
+A clean checkout yields the tree of its HEAD; a dirty one yields a tree no commit has yet. Two results with equal tree ids measured the same code whatever their commit, timestamp, or host, so dirty runs are distinguishable from each other and from HEAD. When that state is later committed, the commit's tree equals the recorded id and a comparator can attach the earlier results to the real revision. The tree id identifies the code but does not reproduce it; a patch, when kept, is a provenance artifact of kind `patch`. Non-git sources use their native tree hash or a hash of sorted file paths and contents; `unknown` dirty state pairs with an absent tree id.
 
 **Thin local results.** An ad hoc run on a laptop (UC-01, one-off stories) may have no benchmark repository and no project. `project` and `benchmark` are therefore optional, and environment identity may use the `local/v1` schema with only a hostname. Such a result is *thin*: it validates and can be compared within its own run. On ingest the store assigns it the implicit project `local/<hostname>` so that its vocabulary rows exist, and it joins a tracked project's series only after an approved mapping re-projects it with the missing coordinates (§6). When the logic under test lives in the benchmark scripts themselves, as in a Narwhals overhead study, the script repository is the subject: `source` names it, and `benchmark` either names the same source or is omitted.
 
@@ -136,7 +144,7 @@ A Narwhals-over-pandas-or-Polars study has the same shape: `narwhals` is the pri
 | **Resource selection** | Optional resource one result applies to | CPU/core set, GPU UUID/device index, accelerator partition |
 | **Observed context** | Conditions allowed to vary within a series | kernel, glibc, microcode, image digest, load, temperature |
 | **Result procedure** | Realized batch-wide acquisition details | repetitions completed, inner iterations selected, warmups performed, round within the run, durations, caches actually cleared |
-| **Provenance** | Audit metadata | run/attempt/batch keys, caller labels, dirty flags and patch digest, CI link, logs, runner software, references to input or anchor results, dependency manifest artifact, source payload |
+| **Provenance** | Audit metadata | run/attempt/batch keys, caller labels, dirty flags and working-tree ids, CI link, logs, runner software, references to input or anchor results, patch and dependency manifest artifacts, source payload |
 
 Three rules resolve most cases:
 
@@ -153,7 +161,7 @@ The use-case template (`docs/use-cases/UC_NN_TEMPLATE.md`) reasons in four coord
 | Use-case coordinate | Schema placement |
 |---|---|
 | Code identity | workload variant and its parameters/dataset; benchmark identity |
-| Code version | subject revision and dirty flag; subject configuration; pinned non-primary components |
+| Code version | subject revision, dirty flag, and working-tree id; subject configuration; pinned non-primary components |
 | Environment | environment identity; resource selection; observed context for OS, microcode, load |
 | Execution context | comparison context; procedure (`round`, `order`); structured observation keys; `run_key` and caller labels |
 
@@ -225,7 +233,7 @@ The indexed contract remains scalar: `median([cpu_times, gpu_times])` emits one 
 | **Observed context** | optional immutable condition snapshot |
 | **Producer evidence** | optional observation batch and immutable typed summaries |
 | **Method** | optional realized procedure JSON, including `round` within the run |
-| **Provenance** | producer/version, ingest/native/run/batch keys, caller labels, dirty tri-state flags, references to input or anchor results, mapping version, timestamps, artifacts, payload URI/checksum |
+| **Provenance** | producer/version, ingest/native/run/batch keys, caller labels, dirty tri-state flags and working-tree ids, references to input or anchor results, mapping version, timestamps, artifacts, payload URI/checksum |
 | **Quality** | immutable producer validation, including an observed correctness outcome, and warnings; store-side quarantine/exclusion is separate state |
 
 Derived `series_point` rows live outside the result. Statuses are:
@@ -317,8 +325,12 @@ Absence of a row means the variant was not reported. Telling a lost result from 
     "run_key": "ci.example.org/runs/ci-1234",
     "started_at": "2026-07-18T09:12:44Z",
     "subject_dirty": "clean",
+    "subject_tree": "4b825dc...",
     "benchmark_dirty": "dirty",
-    "benchmark_patch_sha256": "aaaa...",
+    "benchmark_tree": "9fceb02...",
+    "artifacts": [
+      {"kind": "patch", "media_type": "text/x-diff", "uri": "file:///tmp/bench/benchmark.patch", "sha256": "aaaa..."}
+    ],
     "runner": {"name": "example-runner", "version": "2.1"},
     "source_payload_sha256": "bbbb..."
   },
@@ -375,6 +387,7 @@ A thin local message (§4.1) from a contributor's laptop omits `project` and `be
     "run_key": "urn:uuid:3f1d2c4b-8a9e-4f60-b1c2-d3e4f5a6b7c8",
     "started_at": "2026-09-14T10:02:31Z",
     "subject_dirty": "dirty",
+    "subject_tree": "e7a1c3d...",
     "benchmark_dirty": "unknown",
     "labels": {"env": "numpy-2.0"}
   }
@@ -415,7 +428,8 @@ After accepting the Arrow message above, the server may materialize points such 
 **Attempts and keys**
 
 - A harness invocation reporting several quantities yields one result per quantity sharing `attempt_key`; corresponding observations share group/ordinal or pair keys.
-- **Attempt integrity.** Results sharing an `attempt_key` must agree on project, designated source, subject revision, benchmark revision, dirty flags, workload variant, subject descriptor, environment identity, and `run_key`. They may differ in quantity, resource selection, and quantity-specific instrumentation. Disagreement with a stored sibling is an *attempt conflict* (§5.4). Resource selection is what lets GPU 0 and GPU 1 results share one host environment.
+- **Attempt integrity.** Results sharing an `attempt_key` must agree on project, designated source, subject revision, benchmark revision, dirty flags, working-tree ids, workload variant, subject descriptor, environment identity, and `run_key`. They may differ in quantity, resource selection, and quantity-specific instrumentation. Disagreement with a stored sibling is an *attempt conflict* (§5.4). Resource selection is what lets GPU 0 and GPU 1 results share one host environment.
+- Two results are **code-identical** when their `subject_tree` ids match, and likewise for `benchmark_tree`. This is the comparison unit for local work: a dirty checkout against HEAD is two distinct trees, and repeated rounds of the same dirty checkout are one tree. Detection and history still use the revision axis; a project may opt to plot not-known-clean results at HEAD annotated with the tree id.
 - `run_key` comes from the run author, who may also attach `provenance.labels`, a string map such as `{"env": "numpy-2.0"}`, for selecting sides of a comparison. The executor creates a globally namespace-qualified `attempt_key`, such as a URI-like key or UUID, and producers preserve or deterministically map it. Keys and labels never enter identity. Identical retries of `(producer, ingest_key)` return the existing result; different payloads conflict.
 - Pairing across attempts, such as interleaved baseline and contender runs (UC-03), is expressed by matching `procedure.round` on the attempts and matching pair keys on structured observations. `round` is assigned by the run author, increases monotonically within a run, and is kept by a retry, which gets a new attempt key but the same round so that pairing survives. It is never placed in comparison context, which would split the series.
 - `provenance.started_at` is required on every result. It is the measurement start on the producer's clock and the only fact that orders attempts across runs; ingest time is never used for ordering.
@@ -443,12 +457,12 @@ Results carry facts; a **profile** is a comparator-time check that a set of resu
 | Profile | Varies | Must agree | Invariants checked over the run |
 |---|---|---|---|
 | `single-run` (UC-01) | workload parameters | comparison context | none beyond attempt integrity |
-| `variants` (UC-02) | `parameters.role` | subject revision, subject configuration, environment, comparison context | equal attempt counts per role; `procedure.round` alternates between roles |
-| `revisions` (UC-03) | subject revision | workload variant, subject configuration, environment, comparison context | equal attempt counts per side; `procedure.round` alternates; each side has one dirty state |
+| `variants` (UC-02) | `parameters.role` | subject tree id, subject configuration, environment, comparison context | equal attempt counts per role; `procedure.round` alternates between roles |
+| `revisions` (UC-03) | subject tree id | workload variant, subject configuration, environment, comparison context | equal attempt counts per side; `procedure.round` alternates; each side has exactly one tree id and the two differ |
 | `environments` (UC-04) | one pinned component or subject configuration, named by `labels` | subject revision, workload variant, host environment, comparison context | exactly two label values whose reported coordinates differ; equal attempt counts per label; `procedure.round` alternates |
-| `cross-machine` (template example, pending a use case) | environment identity | subject revision, workload variant, subject configuration | each side references an anchor result from the same run via `provenance.references` |
+| `cross-machine` (template example, pending a use case) | environment identity | subject tree id, workload variant, subject configuration | each side references an anchor result from the same run via `provenance.references` |
 
-A comparison in which any side is not `clean` is **local-only**: the comparator produces it, labels it so, and never promotes it into tracked history. This serves a contributor comparing an uncommitted change against HEAD (one-off stories, Arrow local); the CI path of UC-03 rejects dirty sides by its own policy. Thin results (§4.1) may claim `single-run`, `variants`, and `revisions` within their own run; the other profiles require a full environment identity.
+A comparison in which any side is not `clean` is **local-only**: the comparator produces it, labels it so, and never promotes it into tracked history. This serves a contributor comparing an uncommitted change against HEAD (one-off stories, Arrow local): the two sides are two tree ids, and the tree id is what makes each side internally consistent even though neither may have a commit. The CI path of UC-03 rejects dirty sides by its own policy. Thin results (§4.1) may claim `single-run`, `variants`, and `revisions` within their own run; the other profiles require a full environment identity.
 
 A revision may hold several attempts with identical coordinates, since every attempt is its own point, so viewers and comparators must expect more than one result per coordinates and revision. A comparison document therefore lists the `(producer, ingest_key)` of every result it consumed. That is also what lets a saved baseline be reused by reference instead of re-measured (Arrow local story).
 

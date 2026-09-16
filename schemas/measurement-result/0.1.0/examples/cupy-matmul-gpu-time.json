@@ -35,7 +35,9 @@
     "subject": {
       "name": "cupy",
       "components": [
-        {"role": "primary"}
+        {
+          "role": "primary"
+        }
       ],
       "configuration": {
         "cuda_build": "12.x",
@@ -52,8 +54,14 @@
         "name": "cupyx-profiler-benchmark",
         "version": "v1",
         "timer": "cuda-events",
-        "warmup": {"mode": "repetitions", "n_warmup": 3},
-        "repetitions": {"mode": "fixed", "n_repeat": 10}
+        "warmup": {
+          "mode": "repetitions",
+          "n_warmup": 3
+        },
+        "repetitions": {
+          "mode": "fixed",
+          "n_repeat": 10
+        }
       }
     },
     "environment": {
@@ -61,7 +69,10 @@
       "identity": {
         "runner": "gpu-01",
         "cpu": "AMD EPYC 9354",
-        "gpus": ["NVIDIA H100 80GB HBM3", "NVIDIA H100 80GB HBM3"]
+        "gpus": [
+          "NVIDIA H100 80GB HBM3",
+          "NVIDIA H100 80GB HBM3"
+        ]
       }
     },
     "resource_selection": {
@@ -72,16 +83,46 @@
   "measurement": {
     "status": "success",
     "observations": [
-      {"ordinal": 0, "value": 0.018412},
-      {"ordinal": 1, "value": 0.018377},
-      {"ordinal": 2, "value": 0.018395},
-      {"ordinal": 3, "value": 0.018360},
-      {"ordinal": 4, "value": 0.018431},
-      {"ordinal": 5, "value": 0.018388},
-      {"ordinal": 6, "value": 0.018371},
-      {"ordinal": 7, "value": 0.018402},
-      {"ordinal": 8, "value": 0.018390},
-      {"ordinal": 9, "value": 0.018366}
+      {
+        "ordinal": 0,
+        "value": 0.018412
+      },
+      {
+        "ordinal": 1,
+        "value": 0.018377
+      },
+      {
+        "ordinal": 2,
+        "value": 0.018395
+      },
+      {
+        "ordinal": 3,
+        "value": 0.01836
+      },
+      {
+        "ordinal": 4,
+        "value": 0.018431
+      },
+      {
+        "ordinal": 5,
+        "value": 0.018388
+      },
+      {
+        "ordinal": 6,
+        "value": 0.018371
+      },
+      {
+        "ordinal": 7,
+        "value": 0.018402
+      },
+      {
+        "ordinal": 8,
+        "value": 0.01839
+      },
+      {
+        "ordinal": 9,
+        "value": 0.018366
+      }
     ],
     "summaries": [
       {
@@ -97,7 +138,7 @@
       {
         "type": "statistic",
         "name": "sample_standard_deviation",
-        "value": 0.0000220,
+        "value": 2.2e-05,
         "method": "n-1",
         "source": "producer"
       }
@@ -117,8 +158,13 @@
     "run_key": "ci.example.org/runs/nightly-778",
     "started_at": "2026-09-13T02:14:07Z",
     "subject_dirty": "clean",
+    "subject_tree": "3e0f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f",
     "benchmark_dirty": "clean",
-    "runner": {"name": "example-gpu-runner", "version": "3.0"},
+    "benchmark_tree": "7d1c2b3a4f5e6d7c8b9a0f1e2d3c4b5a6f7e8d9c",
+    "runner": {
+      "name": "example-gpu-runner",
+      "version": "3.0"
+    },
     "source_payload_sha256": "1c9e4f7a2b5d8e0f3a6c9b2d5e8f1a4c7b0d3e6f9a2c5b8d1e4f7a0c3b6d9e2f"
   }
 }

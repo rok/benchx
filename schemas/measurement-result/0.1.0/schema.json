@@ -274,6 +274,19 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["started_at", "subject_dirty", "benchmark_dirty"],
+      "$comment": "A tree id is required whenever the matching dirty flag is clean or dirty, and absent when it is unknown.",
+      "allOf": [
+        {
+          "if": { "properties": { "subject_dirty": { "enum": ["clean", "dirty"] } } },
+          "then": { "required": ["subject_tree"] },
+          "else": { "not": { "required": ["subject_tree"] } }
+        },
+        {
+          "if": { "properties": { "benchmark_dirty": { "enum": ["clean", "dirty"] } } },
+          "then": { "required": ["benchmark_tree"] },
+          "else": { "not": { "required": ["benchmark_tree"] } }
+        }
+      ],
       "properties": {
         "run_key": {
           "description": "Grouping key assigned by the run author: scheduler, CLI, or CI system.",
@@ -295,12 +308,18 @@
         },
         "ended_at": { "$ref": "#/$defs/timestamp" },
         "subject_dirty": { "$ref": "#/$defs/dirtyState" },
+        "subject_tree": {
+          "description": "Content hash of the measured subject checkout: the git tree object id of the working tree, or a native equivalent. Equal ids mean identical code regardless of commit.",
+          "$ref": "#/$defs/treeId"
+        },
         "benchmark_dirty": {
           "description": "unknown when no benchmark repository exists or its state could not be determined.",
           "$ref": "#/$defs/dirtyState"
         },
-        "subject_patch_sha256": { "$ref": "#/$defs/sha256" },
-        "benchmark_patch_sha256": { "$ref": "#/$defs/sha256" },
+        "benchmark_tree": {
+          "description": "Content hash of the measured benchmark checkout, as for subject_tree.",
+          "$ref": "#/$defs/treeId"
+        },
         "runner": {
           "description": "Audit-only identity of the runner software.",
           "type": "object",
@@ -375,6 +394,11 @@
     },
     "uri": { "type": "string", "minLength": 1, "format": "uri" },
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "treeId": {
+      "description": "Lowercase hex content hash of a working tree: 40 characters for git SHA-1 repositories, 64 for SHA-256 ones or other hash schemes.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
     "dirtyState": {
       "description": "Working-tree state of the measured checkout. unknown is distinct from clean so comparators can reject anything not known to be clean.",
       "enum": ["clean", "dirty", "unknown"]

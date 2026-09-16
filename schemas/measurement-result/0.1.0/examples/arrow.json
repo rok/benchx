@@ -34,7 +34,9 @@
     "subject": {
       "name": "apache-arrow",
       "components": [
-        {"role": "primary"}
+        {
+          "role": "primary"
+        }
       ],
       "configuration": {
         "build_type": "release",
@@ -51,8 +53,14 @@
         "name": "benchmark-time",
         "version": "v1",
         "timer": "perf_counter",
-        "warmup": {"mode": "time", "seconds": 1},
-        "calibration": {"mode": "adaptive", "minimum_sample_seconds": 0.01},
+        "warmup": {
+          "mode": "time",
+          "seconds": 1
+        },
+        "calibration": {
+          "mode": "adaptive",
+          "minimum_sample_seconds": 0.01
+        },
         "filesystem_cache": "drop-before-attempt"
       }
     },
@@ -67,7 +75,13 @@
   },
   "measurement": {
     "status": "success",
-    "observations": [0.0371, 0.0364, 0.0363, 0.0370, 0.0368],
+    "observations": [
+      0.0371,
+      0.0364,
+      0.0363,
+      0.037,
+      0.0368
+    ],
     "summaries": [
       {
         "type": "estimate",
@@ -106,18 +120,34 @@
     "attempted_repetitions": 5,
     "completed_repetitions": 5,
     "warmups_performed": 1,
-    "caches_cleared": ["filesystem"]
+    "caches_cleared": [
+      "filesystem"
+    ]
   },
   "provenance": {
     "run_key": "ci.example.org/runs/ci-1234",
     "started_at": "2026-07-18T09:12:44Z",
     "subject_dirty": "clean",
+    "subject_tree": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
     "benchmark_dirty": "dirty",
-    "benchmark_patch_sha256": "5f3c1e8a9b2d4c6e7f0a1b3c5d7e9f2a4b6c8d0e1f3a5b7c9d2e4f6a8b0c1d3e",
-    "runner": {"name": "example-runner", "version": "2.1"},
-    "source_payload_sha256": "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b"
+    "benchmark_tree": "9fceb02d0ae598e95dc970b74767f19372d61af8",
+    "runner": {
+      "name": "example-runner",
+      "version": "2.1"
+    },
+    "source_payload_sha256": "9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b",
+    "artifacts": [
+      {
+        "kind": "patch",
+        "media_type": "text/x-diff",
+        "uri": "file:///tmp/bench/benchmark.patch",
+        "sha256": "5f3c1e8a9b2d4c6e7f0a1b3c5d7e9f2a4b6c8d0e1f3a5b7c9d2e4f6a8b0c1d3e"
+      }
+    ]
   },
   "quality": {
-    "warnings": ["dirty-benchmark-tree"]
+    "warnings": [
+      "dirty-benchmark-tree"
+    ]
   }
 }
