@@ -40,7 +40,8 @@ The translating half cannot know where the native output came from. The runner, 
 | `subject` descriptor | `coordinates.subject` | work order: components, roles, pinned revisions, build configuration |
 | `environment` | `coordinates.environment` | runner's environment policy: identity schema and identity fields |
 | `resource_selection` | `coordinates.resource_selection` | runner, when it selected a device or core set |
-| `protocol` | `coordinates.comparison_context.protocol` | work order's precision settings and environment policy, spelled per schema Appendix B |
+| `protocol` | `coordinates.comparison_context.protocol` | work order's precision settings and environment policy, spelled per schema Appendix B, including every setting the harness output does not echo back: timing mode, warmup, calibration mode, confidence level, instrument and its value-altering switches |
+| `scenario` | `workload.parameters.scenario`, `benchmark` | optional reference to a versioned scenario document that fixes the workload and names the estimator and direction, as the OpenTelemetry benchmarks do; the estimator declared there is carried with `method_version` naming the scenario revision |
 | `host runtime` | `coordinates.comparison_context` | runner: Python version, JVM, compiler where the harness does not report it |
 | `observed_context` | `observed_context` | runner's snapshot: kernel, driver, governor, load, temperature |
 | `run_key`, `attempt_key`, `labels`, `round` | `provenance`, `procedure.round` | run author and executor |
@@ -53,7 +54,9 @@ A minimal context for a local `timeit` run is a source, a revision, dirty and tr
 
 ## 4. Translating half
 
-### 4.1 Output
+### 4.1 Input and output
+
+The native input is everything the harness wrote, not one file: ASV's results JSON is unreadable without its `benchmarks.json` sidecar, cargo-criterion writes a report directory beside its message stream. The adapter names every file it needs and captures the sidecars as provenance artifacts with checksums, so a translation can be repeated from artifacts alone.
 
 One ingest object per attempt and quantity, each validating against `schemas/measurement-result/0.1.0/schema.json` before it leaves the adapter. Documents are written as separate files named by their `ingest_key` with `/` and `:` replaced, so a directory of adapter output is a valid file-drop delivery (schema §5.4) and sorts by key. An adapter that cannot produce a valid document for a case emits an `error` result for that case with reason `adapter.mapping-failed` and the native fragment in `provenance.info`; it never drops the case, and it never emits a document that fails validation with only a warning attached.
 
@@ -63,11 +66,15 @@ Each native measure maps to one schema quantity by name and canonical UCUM unit 
 
 ### 4.3 Workload variants and parameters
 
-The workload name is the harness's case name. Parameters come from structured native fields when the harness has them, such as pytest-benchmark's `params` or JMH's `params`. Encoded names such as `BM_Sort/1024/2` are split into name and parameters only under a project's `parameter_rules`; without rules the full string is the workload name and nothing is parsed (schema §6). Harness counters are split by the rules too: a counter that describes the workload, such as null fraction, becomes a parameter; one that describes the run, such as `repetition_index`, goes to procedure; the rest go to observed context. Dataset identity, when the harness or work order names one, goes to `workload.dataset`.
+The workload name is the harness's case name. Parameters come from structured native fields when the harness has them, such as pytest-benchmark's `params` or JMH's `params`. Encoded names such as `BM_Sort/1024/2` are split into name and parameters only under a project's `parameter_rules`; without rules the full string is the workload name and nothing is parsed (schema §6). Harness counters are split by the rules too: a counter that describes the workload, such as null fraction, becomes a parameter; one that describes the run, such as `repetition_index`, goes to procedure; the rest go to observed context. Dataset identity, when the harness or work order names one, goes to `workload.dataset`. The converse holds as well: an adapter never encodes parameters, a quantity, a package, or a unit into the workload name to tell results apart. Those are structured fields, and a name assembled from them changes whenever their serialization does. Nor does a name carry control flags: a recognized suffix such as Bencher's `-bencher-ignore` is stripped into `provenance.labels`, never left in identity. Native parameter values are kept as the harness serialized them, ASV's `repr()` strings included, never evaluated or re-serialized, and the order of parameter combinations is taken from the result file rather than the current suite, because the two can disagree.
 
 ### 4.4 Observations and summaries
 
-Per-repetition rows become the observation batch, one value per repetition in the canonical unit after the harness's own normalization, which the adapter records under `procedure` (inner iterations, warmups performed) and `protocol` (calibration mode). When the harness reports per-repetition metadata, observations are structured objects carrying `ordinal` and any group or pair key. Harness aggregates map to typed summaries with `source: "producer"`: a mean or median to an `estimate` with the harness's estimator declared by name and method version, standard deviation or MAD to `statistic`, a reported confidence interval to `confidence_interval` with its level, opaque bounds such as `stat`/`sys` to `source_bounds`. An adapter never computes a statistic the harness did not report; the server derives what policy needs. Observations are always finite: a repetition that produced no value is not a `null` placeholder in the batch but a smaller batch with `procedure.completed_repetitions` below `attempted_repetitions` and status `partial`. Inner iterations per observation and the repetition count are two different numbers and are never conflated into one `iterations` field.
+Per-repetition rows become the observation batch, one value per repetition in the canonical unit after the harness's own normalization, which the adapter records under `procedure` (inner iterations, warmups performed) and `protocol` (calibration mode). When the harness reports per-repetition metadata, observations are structured objects carrying `ordinal` and any group or pair key. Harness aggregates map to typed summaries with `source: "producer"`: a mean or median to an `estimate` with the harness's estimator declared by name and method version, standard deviation or MAD to `statistic`, a reported confidence interval to `confidence_interval` with its level, opaque bounds such as `stat`/`sys` to `source_bounds`. A harness's single headline number is an estimate whose estimator the adapter must know and declare: pytest-benchmark's `ops` is the reciprocal of the mean, JMH's `score` depends on `mode`, cargo's `bench:` value is a median with half the min-to-max spread as its deviation. When the adapter cannot establish what the number is, the estimator is `source-defined` with the harness's own label, never a guessed `mean`. Dispersion is typed the same way: an absolute deviation is a `statistic` in the quantity's unit, a relative one such as `±1.12%` is a `statistic` named as relative and dimensionless, and a bound whose meaning is unknown is `source_bounds` with the harness's label. A dispersion figure is never stored as a string. An adapter never computes a statistic the harness did not report; the server derives what policy needs. Observations are always finite: a repetition that produced no value is not a `null` placeholder in the batch but a smaller batch with `procedure.completed_repetitions` below `attempted_repetitions` and status `partial`. Inner iterations per observation and the repetition count are two different numbers and are never conflated into one `iterations` field. When the iteration count varies per observation, as in cargo-criterion's `[d, 2d, …, Nd]` samples and BenchmarkDotNet's per-measurement `Operations`, each structured observation carries its own count and `procedure.inner_iterations` is omitted; the per-iteration value is the total divided by that count.
+
+Some harnesses emit a post-processed batch beside the raw one. BenchmarkDotNet's `Result` rows are its `Workload/Actual` rows minus the median overhead with outliers removed. The adapter takes the raw rows as the batch and never subtracts overhead or drops outliers itself; a harness's processed batch is kept only when the processing is declared under `protocol`, and the overhead rows become a sibling `overhead-time` result or provenance. Rows whose unit is a percentage or ratio, such as Google Benchmark's `cv` and `RMS` aggregates, are dimensionless `statistic`s and are never converted with the time unit. A harness that rounds its stored aggregates, ASV to five significant digits, has that precision recorded in the summary's `method` so a later recomputation from observations can tell rounding from disagreement. A value the harness derives from a synthetic quantity by a constant, CodSpeed's simulated cycles divided by an assumed frequency and presented as time or speed, is stored as the underlying quantity with the constant in `provenance.info`, never as `wall-time` or a rate.
+
+A status-valued native metric, LNT's `execution_status` or `compile_status`, is not a quantity. It sets the status and reason of its sibling results for that test. A string-valued native metric such as a binary hash is provenance.
 
 ### 4.5 Statuses
 
@@ -81,16 +88,16 @@ Per-repetition rows become the observation batch, one value per repetition in th
 | case in the work order, absent from output | `error` | `harness.no-output`, emitted by the driving half |
 | harness marks the case as not applicable, such as ASV's `NaN` for an invalid parameter combination | `skipped` | harness reason or `harness.not-applicable` |
 
-A case is never dropped by a `continue` in the mapping code. Every native row and every ordered case ends as exactly one result per quantity.
+A case is never dropped by a `continue` in the mapping code. Every native row and every ordered case ends as exactly one result per quantity. When a source records failure only at a coarser grain than the variant, as rustc-perf's error table does per benchmark, the adapter emits one `error` result at that grain, with the workload name and no parameters, and never fans it out to guessed variants. A harness's sentinel revision values, pytest-benchmark's `"unversioned"` and `"unknown"`, never become a revision key; the context document's revision is authoritative and a missing one makes the result thin.
 
 ### 4.6 Keys
 
 - `producer.name` is a stable namespaced adapter identity, such as `benchx/gbench-adapter`; `producer.version` is its software version; `mapping_version` its rule set.
-- `ingest_key` is `<run_key>:<workload>/<parameters>:<quantity>` plus the attempt discriminator when a run holds several attempts of one variant. It is unique per producer and stable across re-runs of the translation.
+- `ingest_key` is `<run_key>:<workload>/<parameters>:<quantity>` plus the attempt discriminator when a run holds several attempts of one variant. It is unique per producer and stable across re-runs of the translation. Each component is percent-escaped so that a `/` or `:` inside a workload name, common in Nyrkiö-style path names and pytest node ids, cannot collide with the separators.
 - `attempt_key` is taken from the context document. When the driving half runs the harness it mints one per invocation; when translating a native file that already carries an attempt identifier with known semantics, it preserves that; otherwise it mints a distinct key per case rather than guessing that results were measured together (schema §6).
 - `run_key`, `labels`, and `round` pass through untouched, and are identical on every result the adapter emits for one native output.
 - Each catalog entry states what its `attempt_key` groups. It is always one execution of one workload variant; grouping across variants, such as "all parameter values of one benchmark" or "one suite file", is `batch_key`, which is provenance and never used for pairing.
-- `started_at` is the measurement start reported by the harness or the context document, never the time the adapter constructed the document.
+- `started_at` is the measurement start reported by the harness or the context document, never the time the adapter constructed the document. When neither reports one and the source carries only an ordering timestamp, Codespeed's revision date for instance, that value is used and `provenance.info.started_at_source` names the fallback.
 
 ### 4.7 Compound outputs
 
@@ -101,7 +108,7 @@ A harness that reports a derived quantity per repetition, such as cupyx returnin
 The driving half is a thin shell around one harness binary or entry point:
 
 1. **Scope.** Translate the work order's case filters into the harness's filter syntax, such as `--benchmark_filter=<regex>` or pytest `-k`.
-2. **Precision.** Translate requested repetitions, minimum time, and warmup into harness flags, and record the requested values under `protocol` so intended settings are comparison context. What the harness actually did is read back from its output into `procedure`.
+2. **Precision.** Translate requested repetitions, minimum time, and warmup into harness flags, and record the requested values under `protocol` so intended settings are comparison context. What the harness actually did is read back from its output into `procedure`. Every setting the output does not echo is recorded here or nowhere: Google Benchmark's timing mode, warmup time, and random interleaving; pytest-benchmark's pedantic versus calibrated mode and warmup rounds; cargo-criterion's confidence level and resample count; JMH's warmup and measurement plan. The driving half also asks for the fullest output the harness offers, such as BenchmarkDotNet's full rather than brief export, since a brief export has no observations.
 3. **Environment.** Apply nothing itself. Thread caps, pinning, and device selection are the runner's environment policy; the driving half only passes through environment variables the policy set and records the harness's view of them.
 4. **Run.** Invoke the harness with machine-readable output enabled, a per-attempt `attempt_key`, and a time limit. Capture stdout, stderr, exit status, and the native output file into provenance artifacts. A non-zero exit does not abort translation: whatever native output exists is translated, and the exit status becomes the reason on the results that lack output.
 5. **Account.** Compare cases in the work order with cases in the output and emit `error` results with `harness.no-output` for the difference, so a truncated run never looks like a shorter suite.
@@ -126,16 +133,21 @@ The first adapters follow the schema's §6.2 mappings. Each entry names the nati
 | `threads` | `protocol.threads` |
 | user counters | parameters, procedure, or observed context per `parameter_rules` |
 | `error_occurred`, `error_message` | `error` status with the message as reason token and full text in `provenance.info` |
+| `skipped`, `skip_message` | `skipped` status; a separate pair from the error pair, absent on normal rows |
+| `aggregate_name`, `aggregate_unit` | `time` aggregates are summaries in the quantity's unit; `percentage` aggregates such as `cv` and custom statistics are dimensionless `statistic`s; aggregates exist only when at least two repetitions succeeded, so their absence is not an error |
+| `BigO` and `RMS` rows (`big_o`, `cpu_coefficient`, `real_coefficient`, `rms`) | family-level complexity fit, not a summary of one variant; project-declared quantities on a family result or `provenance.info` |
+| `family_index`, `per_family_instance_index` | `provenance.info` |
+| timing mode (`UseRealTime`, `UseManualTime`, `MeasureProcessCPUTime`), warmup time, `min_time` form, random interleaving, perf-counter list | not in the JSON; recorded by the driving half under `protocol`; counter and rate values take their denominator from the timing mode |
 | `context.host_name`, `num_cpus`, `mhz_per_cpu`, `caches` | `provenance.info`; identity comes from the context document |
 | `context.cpu_scaling_enabled`, `load_avg` | `observed_context` |
 | `context.date` | `started_at` fallback |
 | `context.executable`, `library_build_type` | `provenance.info`; build type belongs in the subject configuration the runner supplies |
 
-Attempt key: one per `run_name` row group, that is per encoded case; `batch_key` may group the cases of one binary. Aggregate rows are kept as producer summaries, not discarded.
+Attempt key: one per `run_name` row group, that is per encoded case; `batch_key` may group the cases of one binary. Aggregate rows are kept as producer summaries, not discarded. User counters carry no flags in the JSON, so whether a counter is a rate, per-thread, or per-iteration value comes from the quantity declaration under `parameter_rules`.
 
 ### 6.2 pytest-benchmark
 
-Round data (`stats.data` with `--benchmark-json`) becomes observations; `params` become parameters; `options.min_rounds`, `min_time`, `max_time`, `warmup` go to `protocol` as requested settings and `stats.rounds`, `iterations`, `warmup` performed go to `procedure`; `stats.min/mean/median/stddev/iqr` become producer summaries; `machine_info` and `commit_info` are audit only, superseded by the context document.
+Round data (`stats.data`, always present with `--benchmark-json`) is per-iteration time and becomes observations; `params` become parameters and `fullname` is the workload name; `options.min_rounds`, `min_time`, `max_time`, `warmup`, `timer`, and `disable_gc` go to `protocol` as requested settings, with `timer` as `protocol.timer`; `stats.rounds` and `iterations` go to `procedure`; `stats.min/mean/median/stddev/iqr` become producer summaries, `ops` is the reciprocal of the mean, and `ld15iqr`, `hd15iqr`, and the `outliers` string are `source_bounds` with the harness's labels because their definitions differ from their docstrings; `machine_info` and `commit_info` are audit only, superseded by the context document, and `commit_info.id` may be a sentinel. Not in the output and therefore recorded by the driving half: pedantic versus calibrated mode, warmup rounds performed. Errored and skipped tests are absent from the export, which is what the driving half's accounting exists for.
 
 ### 6.3 cupyx profiler
 
@@ -143,11 +155,27 @@ Round data (`stats.data` with `--benchmark-json`) becomes observations; `params`
 
 ### 6.4 JMH
 
-Fork and iteration data become structured observations with `group` set to the fork; `scoreConfidence` becomes a `confidence_interval` at 99.9%; `mode` selects the quantity and unit; `params` become parameters; secondary metrics become sibling results.
+`rawData[fork][iteration]` becomes structured observations with `group` set to the fork; `score` is the mean of iteration scores across forks and is declared as such; `scoreError` is a t-based 99.9% half-width and `scoreConfidence` becomes a `confidence_interval` of the mean at that level, except that both are serialized as the string `"NaN"` when fewer than three iterations exist and are then omitted; `mode` selects quantity and unit, `ops/<tu>` for throughput and `<tu>/op` for the time modes; in `sample` mode `rawDataHistogram` is a per-iteration multiset and is kept as weighted structured observations or an artifact, and `scorePercentiles` are estimates only in that mode; `secondaryMetrics` become sibling results whose `rawData` may be ragged against the primary; `params` are strings and are typed only under rules; `warmup*`, `measurement*`, and `jvmArgs` go to `protocol`, `jvm`, `jdkVersion`, and `vmName` to comparison context as host runtime.
 
-### 6.5 timeit and ad hoc scripts
+### 6.5 cargo-criterion
+
+`--message-format=json` emits one object per line keyed by `reason`; unknown reasons and fields are tolerated. For `benchmark-complete`, `measured_values[i]` is the total time for `iteration_count[i]` iterations, so each observation is their quotient with the count on the structured observation; `slope` is an estimator in its own right, a regression of sample time on iteration count, and `typical` resolves to `slope` or `mean` and is declared as whichever it was rather than stored as a third estimate; `mean`, `median`, `median_abs_dev`, and `slope` bounds are bootstrap `confidence_interval`s at the run's `confidence_level`, which the message omits and the driving half supplies together with `nresamples`; `throughput[].per_iteration` is a workload parameter and rate results are derived, not read; `change` is a verdict against an untracked baseline and is dropped; `report_directory` is an artifact reference and `group-complete` supplies `batch_key`; a `unit` other than `ns` comes from a custom measurement and maps to a project-declared quantity.
+
+### 6.6 BenchmarkDotNet
+
+Observations come from `Measurements` rows with `IterationMode: Workload` and `IterationStage: Actual`, each `Nanoseconds / Operations` with `Operations` on the observation, `LaunchIndex` as `group`, and `IterationIndex` as ordinal; `Overhead/Actual` rows become a sibling `overhead-time` result; `Result` rows are the harness's processed batch and are not used unless the mapping declares the overhead subtraction and outlier mode under `protocol`; `Jitting`, `Pilot`, and `Warmup` counts go to `procedure`. `Statistics.ConfidenceInterval` is of the mean at level 0.999, `Percentiles` are estimates, the remaining moments and fences are `statistic`s with source names; `Memory.BytesAllocatedPerOperation` and the `Gen*Collections` counts are aggregate-only sibling quantities from the last launch; `Parameters` is a printed string split only under rules and `FullName` is the workload name; `HardwareIntrinsics`, `HasRyuJit`, `Configuration`, and `RuntimeVersion` are subject configuration, `HardwareTimerKind` and `ChronometerFrequency` are `protocol.timer`, `HasAttachedDebugger` is observed context. Job settings are not exported and come from the work order; the driving half requests the full export.
+
+### 6.7 ASV
+
+A live ASV run is read from its results JSON plus `benchmarks.json`. Rows are positional against `result_columns`; `samples` when present become observations and `result` is a median estimate; `stats_ci_99_a/b` become a `confidence_interval` at level 0.99 whose `method` names the runner's quantile method and its small-sample fallback; `stats_q_25/q_75` are `statistic`s; `null` is `error` and `NaN` is `skipped`; `version` is benchmark identity; the file's `params` are kept verbatim and combination order follows the file; `profile` is an artifact. A results file accumulates runs and its `started_at` is the latest, so the driving half supplies the start time of the attempt it just ran.
+
+### 6.8 timeit and ad hoc scripts
 
 The workbench adapter for `timeit.repeat` output: each repeat is an observation after dividing by the loop count, which is recorded as `procedure.inner_iterations`; `protocol` records `timer: perf_counter` and adaptive calibration; the result is thin unless the context document supplies a project and benchmark identity.
+
+### 6.9 Custom JSON in the github-action-benchmark shape
+
+An on-ramp for harnesses without an adapter: an array of `{name, value, unit, range?, extra?}` entries, the format that action accepts for its custom tools. Each entry becomes one aggregate-only result whose estimate is `source-defined` unless a scenario document names it, whose unit is converted to UCUM with the original kept, and whose direction comes from the quantity declaration rather than from the tool name. `range` is typed per §4.4 when its form is recognizable and kept as `source_bounds` otherwise. `extra` goes to `provenance.info` verbatim; when a producer documents it as `key=value` lines, as the OpenTelemetry benchmarks do with `runner`, `cpu`, `kernel`, `runtime`, and `framework`, rules split those keys by meaning the same way counters are, and undocumented keys stay in `provenance.info`. Projects are told plainly that this path stores no observations and that a real adapter recovers them.
 
 ## 7. Conformance
 
@@ -159,7 +187,11 @@ Every adapter ships:
 - **Attempt integrity:** sibling results from one native row agree on every field schema §5.3 lists.
 - **Mapping changelog:** each `mapping_version` documents what changed and whether re-translation of old native files is recommended.
 
-## 8. Prior art: Conbench's `benchadapt`
+## 8. Prior art
+
+Two existing adapter layers were read closely. Their choices are the reason for several rules above.
+
+### 8.1 Conbench's `benchadapt`
 
 Conbench ships the closest existing design: a `BenchmarkAdapter` base class that runs a command, transforms native output into `BenchmarkResult` records, and posts them, with Google Benchmark, Archery, ASV, and Folly implementations. Several of its choices are the reason for rules above.
 
@@ -180,6 +212,46 @@ Conbench ships the closest existing design: a `BenchmarkAdapter` base class that
 | `run_name`, `run_reason`, and `run_tags` are assumed consistent across a run "with no technical enforcement" | consumers cannot rely on the assumption | run-level fields are identical on every result of one output (§4.6); the store enforces attempt integrity |
 
 Two Conbench choices are kept deliberately. Free-form `optional_benchmark_info` and `validation` map to `provenance.info` and `quality.validation`. And its rule that a result without a commit is "not considered for time series analysis" is the ancestor of thin results and the local-only comparison.
+
+### 8.2 `github-action-benchmark`
+
+The action extracts twelve harness formats into one record, `{name, value, unit, range?, extra?}`, appends it to a JSON file on a GitHub Pages branch, and compares against the previous entry with a flat ratio threshold. It is the most widely deployed adapter layer in the open-source ecosystem, and its record shape is what the schema doc's migration table (§6.1) imports.
+
+| Action behaviour | Consequence | Rule here |
+|---|---|---|
+| Every harness collapses to one `value`; pytest's per-round `data`, JMH's `rawData`, and Google Benchmark's `cpu_time` are dropped or written into the free-text `extra` field | observations are unrecoverable; a second quantity survives only as prose | anything the harness reports as a number is an observation, a summary, a quantity, or a procedure field; `extra` is the anti-pattern (§4.2, §4.4) |
+| `range` is a string whose meaning depends on the tool: `± dev` for cargo, `±1.12%` relative for benchmark.js, `stddev: 0.003` for pytest; the normalizer parses only the `±` form and silently skips the rest | dispersion cannot be compared or converted | dispersion is typed, absolute or relative is explicit, unknown bounds are `source_bounds` (§4.4) |
+| Units are canonicalized by lowercasing and are converted to the *previous entry's* unit at write time, for the time and ops-per-time families only | a series' unit is whatever its first entry used; other families never convert | the quantity's canonical unit is fixed at declaration and the adapter converts to it, keeping the original (§4.2) |
+| Direction is a property of the tool, so two custom tool names exist for "bigger" and "smaller", and Go's mixed-direction reported metrics are all treated as smaller-is-better | a throughput metric from a time-oriented tool is compared backwards | direction is quantity metadata (schema §4.4), never tool-level (§6.9) |
+| JMH parameters are stringified into the name; Go appends the unit to name secondary metrics and a package suffix on collision | identity depends on serialization; a formatting change splits history | parameters and quantities are structured fields and never encoded into names (§4.3) |
+| Google Benchmark aggregate rows are extracted as benchmarks named `_mean`, `_median`, `_stddev`; repeated rows share a name and the comparator keeps the first match | aggregates get their own histories and repetitions are lost | `run_type` is honored: repetitions are observations, aggregates are summaries (§6.1) |
+| The headline number is whichever field the extractor picked: `real_time`, `ops`, `score`, `Mean`, a median; nothing records which statistic it is | a series mixes estimators without saying so | the estimate carries an estimator declaration; unknown means `source-defined` (§4.4) |
+| The commit comes from the CI event payload, with a pull request's `repo.updated_at` used as its timestamp, and `date` is extraction time | the revision recorded can differ from the code measured, and timestamps are not measurement times | revision and tree id come from the checkout the runner measured; `started_at` is measurement start (§3, §4.6) |
+| Text scrapers skip lines that do not match and throw on the first layout deviation; an empty extraction is fatal for the whole run | partial output is either silently thinned or entirely lost | machine-readable harness output is preferred, and every ordered case ends as a result (§4.5, §5) |
+| The README warns that pull-request runs pushing to the data branch let any contributor rewrite history, and that hosted runners vary by 10 to 20 percent | trust and environment are left to the workflow author | results from untrusted sources carry their producer identity and are quarantined by ingest policy, never filtered by the adapter; hosted versus dedicated is environment identity, not a caveat |
+
+Two of its choices are worth keeping. The custom JSON shape is a genuinely low on-ramp, which §6.9 adopts as an input format. And storing history in a plain JSON file in a branch, with `max-items-in-chart` as the only retention control, is a reminder that the file-drop path (schema §5.4) must not be the place where history is truncated.
+
+### 8.3 Other systems and harnesses
+
+The remaining systems in the schema doc's review list were read for adapter lessons. Those not already stated above:
+
+| System | Behaviour | Rule here |
+|---|---|---|
+| Bencher | six adapters fill the same untyped `lower_value`/`upper_value` with six meanings: a CI, a deviation, min and max, a relative margin; a `--average` switch chooses mean or median without recording it; repeated runs are reduced to the median entry, discarding samples | dispersion is typed and the estimator declared (§4.4); observations are never reduced by the adapter |
+| Bencher | a `-bencher-ignore` suffix on the benchmark name is a control flag, stripped for identity | names never carry flags; recognized suffixes become labels (§4.3) |
+| LNT | failure is a sibling metric, `execution_status` non-zero; `hash` is a string metric; lists across metrics are zipped by index into one sample row | status metrics set sibling status, string metrics are provenance (§4.4); paired rows keep matching ordinals |
+| rustc-perf | errors are recorded per artifact and benchmark, never per profile, scenario, or metric; `backend`, `target`, and `frontend_threads` were backfilled by migration defaults on old rows | one `error` at the source's grain, no fan-out (§4.5); a coordinate a source backfilled is imported thin with the default noted, not as a reported value |
+| ASV | one results file per machine, commit, and environment accumulates runs; `started_at` is overwritten; parameter combinations follow the file's own `params`, which may differ from the suite; stored statistics are rounded to five significant digits; the CI method changes with sample size | sidecars are inputs and artifacts (§4.1); values and order come from the file (§4.3); rounding precision is recorded in `method` (§4.4); the driving half supplies the attempt's own start time (§6.7) |
+| Codespeed | a result is unique per revision, executable, benchmark, and environment, so a rerun replaces; `date` is nullable; `kernel` and `os` are environment identity | a source without a measurement time uses a named fallback (§4.6); environment fields the target treats as observed context are kept in provenance so the source's splits stay reproducible |
+| Nyrkiö | the test name is a `/`-separated path that also names the API route; `timestamp` is part of the identity key; unit and direction are free per document | key components are escaped (§4.6); unit and direction conflicts are ingest rejections, not adapter fixes |
+| CodSpeed | one run, simulated cycles weighted by cache misses, divided by an undisclosed constant frequency and presented as a speed; `exclude-allocations` changes what the value means; two spellings for one instrument | store the underlying synthetic quantity, never wall time (§4.4); instrument identity and value-altering switches are protocol, aliases are normalized under a mapping version (§3) |
+| OpenTelemetry benchmarks | a stable scenario document is the single source of truth for workload, estimator, and direction; the output is the action's custom shape with `extra` as documented `key=value` lines; the revision axis is a dependency version | the context document may reference a versioned scenario for the estimator (§3); documented `extra` keys are split by rules (§6.9); a dependency version as axis is the `primary` pinned component with the harness repository as `benchmark` identity |
+| Google Benchmark | `skipped` and `error_occurred` are two field pairs; `cv` and `RMS` are percentage rows; complexity rows are family-level; counter flags, timing mode, warmup, and interleaving are invisible in the JSON | §6.1 table |
+| pytest-benchmark | errored and skipped tests are absent from the export; pedantic mode and warmup performed are not exported; `commit_info.id` may be `"unversioned"` | accounting by the driving half (§5); sentinels never become revisions (§4.5) |
+| JMH | `scoreError` serializes as the string `"NaN"` below three iterations; sample mode reports histograms, not scalars; secondary `rawData` is ragged | §6.4 |
+| cargo-criterion | iteration counts vary per sample; `typical` is an alias; the confidence level is not in the message; `change` is a verdict in the measurement stream | §4.4, §6.5 |
+| BenchmarkDotNet | `Result` rows are overhead-subtracted and outlier-filtered; the brief export has no measurements; job settings are not exported | §4.4, §5, §6.6 |
 
 ## 9. Boundaries
 
