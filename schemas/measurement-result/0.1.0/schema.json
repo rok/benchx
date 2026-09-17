@@ -292,7 +292,6 @@
           "description": "Grouping key assigned by the run author: scheduler, CLI, or CI system.",
           "$ref": "#/$defs/token"
         },
-        "batch_key": { "$ref": "#/$defs/token" },
         "labels": {
           "description": "Caller-supplied labels for selecting sides of a comparison, such as {\"env\": \"numpy-2.0\"}. Never enter identity.",
           "type": "object",

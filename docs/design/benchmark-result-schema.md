@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-This document defines the minimum model needed to ingest, compare, and migrate computing benchmark results without inventing statistical meaning. Detection, alerts, thresholds, scheduling, and run lifecycle are out of scope.
+This document defines the minimum model needed to ingest, compare, and migrate computing benchmark results without inventing statistical meaning. Detection, alerts, thresholds, scheduling, run lifecycle, and environment setup are out of scope.
 
 > A **measurement result** records the evidence from one measurement attempt for one quantity and one workload variant, together with its conditions and provenance. It holds individual repeated measurements as observations when the producer provides them; an aggregate-only result is valid.
 
@@ -95,14 +95,14 @@ In metrology, the quantity intended for a workload variant at a revision is the 
 | `workload_variant` | workload plus one resolved parameter assignment | unique `(project_id, name, parameters)` |
 | `quantity` | named scalar output with canonical unit (UCUM unit when representable) and descriptive metadata (§4.4) | unique `(project_id, name)`; immutable after use |
 | `environment` | host/allocation identity plus descriptive metadata | unique `(identity_schema, fingerprint)` |
-| `revision` | source revision and optional native order metadata | unique `(source_id, revision_key)` |
+| `revision` | source revision plus the optional `native_order` and `native_time` reported with it | unique `(source_id, revision_key)` |
 | `series` | derived index: one comparison identity × one estimator under one identity-policy schema | unique `series_fingerprint`; rebuildable |
 | `series_point` | one entry of a series: the estimate one result contributes, recording which result and which series | unique `(series_fingerprint, producer, ingest_key)`; rebuildable |
 | `benchmark_result` | immutable producer record for one attempt × one quantity | unique `(producer, ingest_key)`; indexed by `reported_coordinates_fingerprint` |
 
 `workload_variant.parameters` is a canonical JSON object holding one parameter assignment. A workload declared with `size=[10, 100, 1000]` yields three variants; a parameter value may itself be an array, such as a matrix shape, and the benchmark definition resolves the distinction before ingestion. A workload may also carry a `dataset` object with name, version, checksum, and generation parameters; it is part of the variant identity, so two runs on different data never share a variant. A baseline-versus-variant study (UC-02) is two variants that differ in a `role` parameter, not a separate field.
 
-`source` and `revision` serve both subject and benchmark code. A revision key has no intrinsic order: history queries take ancestry from the source repository or an auxiliary revision catalog keyed by `(source_id, revision_key)`; without either, results stay queryable but revision order and ancestor-based baselines are unavailable. Parent hashes are not copied into results.
+`source` and `revision` serve both subject and benchmark code. A revision key has no intrinsic order, and the revision graph is not a core table: history queries take ancestry from the source repository or from an auxiliary revision catalog keyed by `(source_id, revision_key)`. When neither is available, ordering falls back to the `native_order` or `native_time` a producer reported with the revision, as migrated LNT or rustc-perf results do; that yields a linear order but not ancestry, so ancestor-based baselines still need a graph. Without any of these, results stay queryable but revision order is unavailable. Parent hashes are not copied into results.
 
 A `revision` row is keyed by the clean VCS identifier. Whether the measured checkout had uncommitted changes is a fact about the result: `subject_dirty` and `benchmark_dirty` are required tri-state flags, `clean`, `dirty`, or `unknown`, in provenance. A clean and a dirty result at the same commit therefore share a revision row. `unknown` is distinct from `clean` so that a comparator can tell what is known to be clean. The flag, the working-tree id below, and a quality warning exist so that a detector or comparator can filter or annotate dirty results trivially; what it does with them is its own policy. The failure mode to avoid is the one asv has, where uncommitted changes are silently ignored and a result is charted as if it were the commit. Comparators may compare dirty sides within one run, as a contributor does with an uncommitted change against HEAD; such a comparison is *local-only* and never promotes into tracked history (§5.5).
 
@@ -120,7 +120,7 @@ Two limits follow from how git hashes a tree. Submodules and nested repositories
 
 **Thin local results.** An ad hoc run on a laptop (UC-01, one-off stories) may have no benchmark repository and no project. `project` and `benchmark` are therefore optional, and environment identity may use the `local/v1` schema with only a hostname. Such a result is *thin*: it validates and can be compared within its own run. On ingest the store assigns it the implicit project `local/<hostname>` so that its vocabulary rows exist, and it joins a tracked project's series only after an approved mapping re-projects it with the missing coordinates (§6). When the logic under test lives in the benchmark scripts themselves, as in a Narwhals overhead study, the script repository is the subject: `source` names it, and `benchmark` either names the same source or is omitted.
 
-`benchmark_result` stores coordinates exactly as reported plus their fingerprint, `attempt_key`, the outcome, observed context, observation batch, producer summaries, procedure, quality, and provenance as validated JSON. All of it is immutable after ingest. Promote a JSON structure to a child table only when a concrete query, size, or integrity requirement justifies it. No core tables exist for estimator, unit, procedure, run/attempt, observation, interval, uncertainty component, covariance, revision order, or aliases; estimator and unit vocabularies are configuration.
+`benchmark_result` stores coordinates exactly as reported plus their fingerprint, `attempt_key`, the outcome, observed context, observation batch, producer summaries, procedure, quality, and provenance as validated JSON. All of it is immutable after ingest. Promote a JSON structure to a child table only when a concrete query, size, or integrity requirement justifies it. No core tables exist for estimator, unit, procedure, run/attempt, observation, interval, uncertainty component, covariance, revision graph, or aliases; estimator and unit vocabularies are configuration.
 
 `series` and `series_point` are materialized indexes. A series is the ordered list of estimates for one comparison identity and one estimator, for example the minimum wall time of a Parquet read on one runner across three revisions, `[50, 10, 25]`. A series point is one entry of that list, `50`, and records the result it was computed from and the series it belongs to, so either can be reached from the other. The server applies the identity policy to reported coordinates, creates a series per comparison identity and estimator, and a point per eligible result. Rebuilding under one policy schema never deletes indexes built under another. Stable annotations and external references use `series_fingerprint`, not a row ID.
 
@@ -152,7 +152,7 @@ A result pins the components its workload exercises and no others. A pandas over
 | **Resource selection** | Optional resource one result applies to | CPU/core set, GPU UUID/device index, accelerator partition |
 | **Observed context** | Conditions allowed to vary within a series | kernel, glibc, microcode, image digest, load, temperature |
 | **Result procedure** | Realized batch-wide acquisition details | repetitions completed, inner iterations selected, warmups performed, round within the run, durations, caches actually cleared |
-| **Provenance** | Audit metadata | run/attempt/batch keys, caller labels, dirty flags and working-tree ids, CI link, logs, runner software, references to input or anchor results, patch and dependency manifest artifacts, source payload |
+| **Provenance** | Audit metadata | run/attempt keys, caller labels, dirty flags and working-tree ids, CI link, logs, runner software, references to input or anchor results, patch and dependency manifest artifacts, source payload |
 
 Three rules resolve most cases:
 
@@ -161,6 +161,8 @@ Three rules resolve most cases:
 - **Identity versus annotation.** A timer, harness, probe, or data-reduction version goes in comparison context if its change must split history, observed context if it should only annotate, and provenance if audit-only. A project that later needs an observed field to match promotes it into reported coordinates through a new mapping version and identity-policy schema; producers do not move fields on their own.
 
 The top-level `source` is the authoritative axis. The subject component with role `primary` may omit its `source`; if present it must match, and a mismatch is an identity violation (§5.4). Non-primary components carry a source URI and pinned revision as fixed coordinates.
+
+**Environment setup is out of scope.** How the subject and its pinned components are obtained, built, and installed, such as a PyPI wheel versus a source build with particular flags or BLAS backend, is the job of the runner or adapter that prepares the environment. A pinned revision identifies code, not the installed artifact, so the runner or adapter records the facts about the environment it knows to matter: in the subject descriptor when they change the artifact under test (install method, build type, compiler flags), in observed context when they should only annotate, and as a dependency manifest artifact in provenance when a full inventory is wanted. This document prescribes none of those facts and does not aim at reproducing an environment; it records enough to tell two environments apart.
 
 A runner-level **probe** maps to a quantity plus the instrumentation used to acquire it: `GPUTimeProbe` might yield `gpu-time` via CUDA events, `OSSMemoryProbe` yield `peak-rss` via a named OS counter. Probe names are not a schema vocabulary. Comparison context and procedure are open objects; Appendix B lists recommended keys so adapters spell the same warmup, calibration, timer, thread, or cache strategy the same way and land in the same series.
 
@@ -247,7 +249,7 @@ The indexed contract remains scalar: `median([cpu_times, gpu_times])` emits one 
 
 | Group | Fields |
 |---|---|
-| **Identity facts** | reported source, `coordinates`, `reported_coordinates_fingerprint`, subject `revision_id`; project and benchmark identity when not thin |
+| **Identity facts** | reported source, `coordinates`, `reported_coordinates_fingerprint`, subject `revision_key`; project and benchmark identity when not thin |
 | **Attempt grouping** | `attempt_key` |
 | **Outcome** | `status`, optional reason, optional quantitative constraint |
 | **Observed context** | optional immutable condition snapshot |
@@ -530,7 +532,7 @@ For OTLP export, map environment to `Resource`, producer name/version to `Scope`
 The following do not justify core tables for current use cases:
 
 - **Measurement procedure, measuring system, and model:** covered by comparison context, observed context, procedure, and provenance.
-- **Runs/events:** `run_key`, `attempt_key`, and `batch_key` group results without a transactional parent.
+- **Runs/events:** `run_key` and `attempt_key` group results without a transactional parent.
 - **Observation rows, uncertainty budgets, covariance, and multidimensional data:** inline typed JSON for the common case; artifacts for the large or specialist case.
 - **Unit and estimator tables:** the quantity stores its unit; policy lists the estimators it projects.
 - **Revision graph and alias tables:** source integrations or an optional revision catalog provide topology; audited display mappings provide aliases.
