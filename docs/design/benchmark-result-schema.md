@@ -230,7 +230,7 @@ A **compound estimator** additionally declares semantic input roles and quantiti
 **How a compound result is created.** A compound is an ordinary result for its own quantity, produced by a short pipeline that runs after its inputs exist and reads only stored, immutable results:
 
 1. **Resolve inputs by role** within one `run_key`, and record each as a `(producer, ingest_key)` reference in `provenance.references`.
-2. **Check compatibility.** Inputs must share what the compound's series will claim: subject revision and tree, pinned components, environment, comparison context, and, across attempts, `round`. Attempt integrity (§5.3) guarantees this for same-attempt inputs; the consuming profile (§5.5) does for cross-attempt ones.
+2. **Check compatibility.** Inputs must share what the compound's series will claim: subject revision and tree, pinned components, environment, comparison context apart from quantity-specific instrumentation such as `protocol.timer`, `protocol.synchronization`, and `protocol.probe`, and, across attempts, `round`. Instrumentation may differ per input, as it does between CPU and GPU time; it stays on the referenced inputs, and the compound's own comparison context carries only the shared keys. Attempt integrity (§5.3) guarantees this for same-attempt inputs; the consuming profile (§5.5) does for cross-attempt ones.
 3. **Pair observations** by ordinal or pair key. Pairing needs equal counts, which is why the profiles require interleaved rounds and equal repetitions.
 4. **Apply the derivation rule per pair**, such as `max` of CPU and GPU time or the ratio of narwhals to native time. The results are the compound's observation batch, kept as structured observations with their ordinals, and the rule is declared next to them in `measurement.derivation` as an estimator at `input_level: observations`.
 5. **Apply an ordinary estimator** to that batch, `median` say, as the producer estimate. Policy may materialize other estimators from the same batch later.
@@ -440,7 +440,7 @@ After accepting the Arrow message above, the server may materialize points such 
 - Observations are finite values in the quantity's unit after declared normalization. A numeric array is the common batch; structured observations carry per-observation ordinal, slot, group, pair, inclusion, or exclusion data.
 - Observation standard deviation is a precision statistic, not automatically the uncertainty of a mean or median. Unknown bounds stay `source_bounds`; labels such as `stat`, `sys`, `range`, or `error` keep source semantics.
 - For a deterministic quantity (§4.4), one observation is complete evidence and must not be treated as an undersampled distribution.
-- `success` and `partial` require a non-empty usable batch or at least one finite producer estimate. `censored` requires a constraint with kind (`lower_bound`, `upper_bound`, `interval`), finite bounds, inclusivity, and cause. `error` and `skipped` carry none of these. Iteration and repetition counts are positive, durations non-negative, and interval lower bounds never exceed upper bounds.
+- `success` and `partial` require a non-empty usable batch or at least one finite producer estimate. `censored` requires a constraint with kind (`lower_bound`, `upper_bound`, `interval`), finite bounds, inclusivity, and cause. `error` and `skipped` carry none of these. Iteration and repetition counts are positive, completed repetitions never exceed attempted ones, durations non-negative, and interval lower bounds never exceed upper bounds.
 
 **Derived projections**
 
