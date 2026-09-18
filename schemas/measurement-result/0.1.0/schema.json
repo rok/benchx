@@ -258,9 +258,10 @@
           "type": "array",
           "items": { "$ref": "#/$defs/token" }
         },
-        "order": {
-          "description": "Execution order across variants in the run.",
-          "$ref": "#/$defs/token"
+        "slot": {
+          "description": "Position of this attempt in the run's realized order across all sides, zero-based. The intended schedule is comparison_context.protocol.schedule.",
+          "type": "integer",
+          "minimum": 0
         },
         "round": {
           "description": "Position of this attempt in an interleaved run, monotone per run and kept by a retry. Attempts with the same round number across sides of a comparison are paired.",
@@ -511,6 +512,11 @@
       "properties": {
         "value": { "$ref": "#/$defs/finiteNumber" },
         "ordinal": { "type": "integer", "minimum": 0 },
+        "slot": {
+          "description": "Position of this observation in the run's realized order across all sides, for observation-level interleaving.",
+          "type": "integer",
+          "minimum": 0
+        },
         "time": { "$ref": "#/$defs/timestamp" },
         "group": { "$ref": "#/$defs/token" },
         "pair": { "$ref": "#/$defs/token" },

@@ -56,6 +56,11 @@
         "repetitions": {
           "mode": "fixed",
           "n_repeat": 5
+        },
+        "schedule": {
+          "unit": "attempt",
+          "rule": "alternating",
+          "rounds": 5
         }
       }
     },
@@ -81,8 +86,8 @@
     "attempted_repetitions": 5,
     "completed_repetitions": 5,
     "warmups_performed": 1,
-    "order": "interleaved",
-    "round": 1
+    "round": 1,
+    "slot": 3
   },
   "provenance": {
     "run_key": "urn:uuid:3f1d2c4b-8a9e-4f60-b1c2-d3e4f5a6b7c8",

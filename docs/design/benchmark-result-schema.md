@@ -147,11 +147,11 @@ A result pins the components its workload exercises and no others. The pandas ov
 | **Workload-variant parameters** | Resolved controlled workload/input, including dataset identity | size, compression, scenario, role, dataset name/version/checksum |
 | **Subject descriptor** | What is under test: components, roles, pinned non-axis revisions, build/configuration | Arrow–NumPy roles, build type, compiler/flags, JIT/AOT mode, backend |
 | **Benchmark identity** | Exact code that defined/executed the workload | source URI, revision |
-| **Comparison context** | How the subject is exercised and measured; intended settings | protocol version, host runtime such as Python version, warmup/GC/calibration policy, adaptive vs. pedantic timing, timer, CUDA events vs. synchronization, cache-clearing policy |
+| **Comparison context** | How the subject is exercised and measured; intended settings | protocol version, host runtime such as Python version, warmup/GC/calibration policy, adaptive vs. pedantic timing, timer, CUDA events vs. synchronization, cache-clearing policy, interleaving schedule |
 | **Environment identity** | Host or allocation shared by an attempt | runner, CPU model, available accelerators, memory, cluster shape |
 | **Resource selection** | Optional resource one result applies to | CPU/core set, GPU UUID/device index, accelerator partition |
 | **Observed context** | Conditions allowed to vary within a series | kernel, glibc, microcode, image digest, load, temperature |
-| **Result procedure** | Realized batch-wide acquisition details | repetitions completed, inner iterations selected, warmups performed, round within the run, durations, caches actually cleared |
+| **Result procedure** | Realized batch-wide acquisition details | repetitions completed, inner iterations selected, warmups performed, round and slot within the run, durations, caches actually cleared |
 | **Provenance** | Audit metadata | run/attempt keys, caller labels, dirty flags and working-tree ids, CI link, logs, runner software, references to input or anchor results, patch and dependency manifest artifacts, source payload |
 
 Three rules resolve most cases:
@@ -173,7 +173,7 @@ The use cases in [`docs/use-cases/`](../use-cases/) and their [template](../use-
 | Code identity | workload variant and its parameters/dataset; benchmark identity |
 | Code version | subject revision, dirty flag, and working-tree id; subject configuration; pinned non-primary components |
 | Environment | environment identity; resource selection; observed context for OS, microcode, load |
-| Execution context | comparison context; procedure (`round`, `order`); structured observation keys; `run_key` and caller labels |
+| Execution context | comparison context; procedure (`round`, `slot`); structured observation keys; `run_key` and caller labels |
 
 ### 4.3 Fingerprints
 
@@ -388,7 +388,8 @@ A thin local message (§4.1) from a contributor's laptop omits `project` and `be
         "timer": "perf_counter",
         "warmup": {"mode": "repetitions", "n_warmup": 1},
         "calibration": {"mode": "adaptive", "minimum_sample_seconds": 0.2},
-        "repetitions": {"mode": "fixed", "n_repeat": 5}
+        "repetitions": {"mode": "fixed", "n_repeat": 5},
+        "schedule": {"unit": "attempt", "rule": "alternating", "rounds": 5}
       }
     },
     "environment": {"schema": "local/v1", "identity": {"hostname": "rok-laptop"}}
@@ -402,8 +403,8 @@ A thin local message (§4.1) from a contributor's laptop omits `project` and `be
     "attempted_repetitions": 5,
     "completed_repetitions": 5,
     "warmups_performed": 1,
-    "order": "interleaved",
-    "round": 1
+    "round": 1,
+    "slot": 3
   },
   "provenance": {
     "run_key": "urn:uuid:3f1d2c4b-8a9e-4f60-b1c2-d3e4f5a6b7c8",
@@ -436,7 +437,7 @@ After accepting the Arrow message above, the server may materialize points such 
 
 - `summaries` is an extensible producer-evidence list with types `estimate`, `statistic`, `confidence_interval`, `coverage_interval`, `source_bounds`, `standard_uncertainty`, and `expanded_uncertainty`. Each entry records the statistic addressed, source, method, and level or factor when applicable. Values use the quantity's canonical unit unless explicitly dimensionless.
 - A producer `estimate` has a finite value, a complete estimator declaration, and `source = producer`; at most one per estimator per result.
-- Observations are finite values in the quantity's unit after declared normalization. A numeric array is the common batch; structured observations carry per-observation ordinal, group, pair, inclusion, or exclusion data.
+- Observations are finite values in the quantity's unit after declared normalization. A numeric array is the common batch; structured observations carry per-observation ordinal, slot, group, pair, inclusion, or exclusion data.
 - Observation standard deviation is a precision statistic, not automatically the uncertainty of a mean or median. Unknown bounds stay `source_bounds`; labels such as `stat`, `sys`, `range`, or `error` keep source semantics.
 - For a deterministic quantity (§4.4), one observation is complete evidence and must not be treated as an undersampled distribution.
 - `success` and `partial` require a non-empty usable batch or at least one finite producer estimate. `censored` requires a constraint with kind (`lower_bound`, `upper_bound`, `interval`), finite bounds, inclusivity, and cause. `error` and `skipped` carry none of these. Iteration and repetition counts are positive, durations non-negative, and interval lower bounds never exceed upper bounds.
@@ -453,7 +454,7 @@ After accepting the Arrow message above, the server may materialize points such 
 - **Attempt integrity.** Results sharing an `attempt_key` must agree on project, designated source, subject revision, benchmark revision, dirty flags, working-tree ids, workload variant, subject descriptor, environment identity, and `run_key`. They may differ in quantity, resource selection, and quantity-specific instrumentation. Disagreement with a stored sibling is an *attempt conflict* (§5.4). Resource selection is what lets GPU 0 and GPU 1 results share one host environment.
 - Two results are **code-identical** when their `subject_tree` ids match, and likewise for `benchmark_tree`. This is the comparison unit for local work: a dirty checkout against HEAD is two distinct trees, and repeated rounds of the same dirty checkout are one tree. Detection and history still use the revision axis; how a project charts results not marked `clean` is its policy, and the tree id is what lets it annotate them honestly.
 - `run_key` comes from the run author, who may also attach `provenance.labels`, a string map such as `{"env": "numpy-2.0"}`, for selecting sides of a comparison. The executor creates a globally namespace-qualified `attempt_key`, such as a URI-like key or UUID, and producers preserve or deterministically map it. Keys and labels never enter identity. Identical retries of `(producer, ingest_key)` return the existing result; different payloads conflict.
-- Pairing across attempts, such as interleaved baseline and contender runs (UC-03), is expressed by matching `procedure.round` on the attempts and matching pair keys on structured observations. `round` is assigned by the run author, increases monotonically within a run, and is kept by a retry, which gets a new attempt key but the same round so that pairing survives. It is never placed in comparison context, which would split the series.
+- Pairing across attempts, such as interleaved baseline and contender runs (UC-03), is expressed by matching `procedure.round` on the attempts and matching pair keys on structured observations. `round` is assigned by the run author, increases monotonically within a run, and is kept by a retry, which gets a new attempt key but the same round so that pairing survives. It is never placed in comparison context, which would split the series. `procedure.slot` is the attempt's position in the run's realized order across all sides, so a comparator can verify the schedule it was given, whether alternating or random, and regress estimates on slot to detect drift. When a harness interleaves at the observation level, as Google Benchmark's random interleaving does, each observation carries its own `slot` and `pair` instead. The intended schedule is `protocol.schedule` in comparison context (Appendix B); the slots are the realized fact.
 - `provenance.started_at` is required on every result. It is the measurement start on the producer's clock and the only fact that orders attempts across runs; ingest time is never used for ordering.
 - Ratios, confidence bounds, and faster/slower classifications produced by a comparison are a separate comparison document, not fields of a result; the comparator design specifies it.
 - Ground-truth values never leave the runner. What is recorded is what the runner derived from them: an error norm or mismatch count as another quantity under the same attempt, and the observed check as `quality.validation.correctness` (`pass` or `fail`). The verdict that acts on it is decision policy. A full dependency manifest is a provenance artifact; only the components policy treats as identity are pinned in the subject descriptor.
@@ -479,9 +480,9 @@ Results carry facts; a **profile** is a comparator-time check that a set of resu
 | Profile | Varies | Must agree | Invariants checked over the run |
 |---|---|---|---|
 | `single-run` ([UC-01](../use-cases/UC-01-short-slug.md)) | workload parameters | comparison context | none beyond attempt integrity |
-| `variants` ([UC-02](../use-cases/UC-02-variants.md)) | one or more workload parameters chosen by the caller, `parameters.role` by default | subject tree id, subject configuration, environment, comparison context, every other workload parameter | equal attempt counts per side; `procedure.round` alternates between sides |
-| `revisions` ([UC-03](../use-cases/UC_03_compare.md)) | subject tree id | workload variant, subject configuration, environment, comparison context | equal attempt counts per side; `procedure.round` alternates; each side has exactly one tree id and the two differ |
-| `environments` ([UC-04](../use-cases/UC-04-cross-env.md)) | one pinned component or subject configuration, named by `labels` | subject revision, workload variant, host environment, comparison context | exactly two label values whose reported coordinates differ; equal attempt counts per label; `procedure.round` alternates |
+| `variants` ([UC-02](../use-cases/UC-02-variants.md)) | one or more workload parameters chosen by the caller, `parameters.role` by default | subject tree id, subject configuration, environment, comparison context, every other workload parameter | equal attempt counts per side; sides alternate by `procedure.slot` |
+| `revisions` ([UC-03](../use-cases/UC_03_compare.md)) | subject tree id | workload variant, subject configuration, environment, comparison context | equal attempt counts per side; sides alternate by `procedure.slot`; each side has exactly one tree id and the two differ |
+| `environments` ([UC-04](../use-cases/UC-04-cross-env.md)) | one pinned component or subject configuration, named by `labels` | subject revision, workload variant, host environment, comparison context | exactly two label values whose reported coordinates differ; equal attempt counts per label; sides alternate by `procedure.slot` |
 | `cross-machine` (template example, pending a use case) | environment identity | subject tree id, workload variant, subject configuration | each side references an anchor result from the same run via `provenance.references` |
 
 **Sides are chosen at comparison time.** The coordinate a profile varies is an argument to the comparator, not a declaration by the producer. Workload parameters are always recorded, so any parameter or set of parameters can be the varying one: `stable` for a sort-algorithm study, `fast_path` for a fast-path deficit, `{role, size}` for a two-factor design. Each distinct assignment of the chosen parameters is one side, and every other coordinate must agree. `role` is only the conventional name that UC-02's `--baseline`/`--variant` flags write; nothing in the schema privileges it. A comparison that was not planned when the run was made is therefore the same operation as one that was, provided the run contains the sides; what a run did not measure, the comparator cannot invent, and a planned run is what guarantees the interleaving invariant.
@@ -613,13 +614,14 @@ Comparison context and procedure are open objects (§4.2). These keys are recomm
 | `protocol.probe` | comparison context | Instrumentation for a non-time quantity | `{"name": "OSSMemoryProbe", "counter": "rss", "sampling_ms": 10}` |
 | `protocol.threads` | comparison context | Requested thread caps, as set through environment variables or library calls | `{"OMP_NUM_THREADS": 1, "OPENBLAS_NUM_THREADS": 1}` |
 | `protocol.affinity` | comparison context | Requested CPU or NUMA pinning | `{"cpus": "0-7", "numa_node": 0}` |
+| `protocol.schedule` | comparison context | Intended interleaving: the unit alternated between sides, the ordering rule, and the number of rounds | `{"unit": "attempt", "rule": "alternating", "rounds": 5}`, `{"unit": "observation", "rule": "random", "rounds": 12}`, `{"unit": "pair", "rule": "random"}`, `{"unit": "attempt", "rule": "concurrent"}` |
 | `configuration.execution_mode` | subject descriptor | JIT versus ahead-of-time execution of the subject | `jit`, `aot` |
 | `inner_iterations` | procedure | Inner iterations actually used per observation | `100` |
 | `attempted_repetitions`, `completed_repetitions` | procedure | Observations requested and obtained | `5`, `5` |
 | `warmups_performed` | procedure | Warmup repetitions actually run | `1` |
 | `caches_cleared` | procedure | Caches actually dropped, in order | `["filesystem"]`, `["filesystem", "cuda-jit"]` |
-| `order` | procedure | Execution order across variants in the attempt's run | `sequential`, `interleaved`, `randomized` |
-| `round` | procedure | Position of this attempt in an interleaved run, monotone per run and kept by a retry; the same round number joins one baseline and one variant attempt | `1`, `2` |
+| `slot` | procedure | Position of this attempt in the run's realized order across all sides, zero-based | `0`, `3` |
+| `round` | procedure | Position of this attempt in an interleaved run, monotone per run and kept by a retry; the same round number joins one baseline and one variant attempt | `0`, `1` |
 | `duration_seconds` | procedure | Wall time spent on the attempt including warmup | `2.31` |
 
 A `pedantic` harness mode is `calibration.mode: fixed` plus `repetitions.mode: fixed`; an `adaptive` mode is `calibration.mode: adaptive` with the minimum sample duration it enforces. Changing any `protocol` value creates a new series under the default identity policy; changing a `procedure` value never does.
