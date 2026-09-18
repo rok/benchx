@@ -43,7 +43,7 @@ The translating half cannot know where the native output came from. The runner, 
 | `protocol` | `coordinates.comparison_context.protocol` | work order's precision settings and environment policy, spelled per schema Appendix B, including every setting the harness output does not echo back: timing mode, warmup, calibration mode, confidence level, instrument and its value-altering switches |
 | `scenario` | `workload.parameters.scenario`, `benchmark` | optional reference to a versioned scenario document that fixes the workload and names the estimator and direction, as the OpenTelemetry benchmarks do; the estimator declared there is carried with `method_version` naming the scenario revision |
 | `host runtime` | `coordinates.comparison_context` | runner: Python version, JVM, compiler where the harness does not report it |
-| `observed_context` | `observed_context` | runner's snapshot: kernel, driver, governor, load, temperature |
+| `observed_context` | `observed_context` | runner's snapshot: kernel, driver, governor, load, temperature; facts from the setup file and context collectors (§5.1) |
 | `run_key`, `attempt_key`, `labels`, `round` | `provenance`, `procedure.round` | run author and executor |
 | `started_at` | `provenance.started_at` | runner; the harness's own timestamp is a fallback |
 | `parameter_rules` | governs §4.3 | project configuration, optional |
@@ -114,6 +114,35 @@ The driving half is a thin shell around one harness binary or entry point:
 5. **Account.** Compare cases in the work order with cases in the output and emit `error` results with `harness.no-output` for the difference, so a truncated run never looks like a shorter suite.
 
 The driving half never edits native output. Translation runs on the captured file so that the same file can be re-translated later under a newer mapping version.
+
+### 5.1 Context collectors
+
+Some facts that could explain a change in an estimate are reported by neither the harness nor the runner: the options a pinned library was compiled with, an inherited environment variable, whether the CPU throttled during the run. A **context collector** is a plugin for recording them. It is a last resort: a fact the harness output, the work order, or the runner's environment policy can supply comes from there, and a collected fact never overrides one.
+
+A collector is a named command registered for one of two points, `before` or `after` the harness invocation of step 4. The driving half runs it in the harness's working directory and environment, with the harness's privileges and no more, outside any timed region and under a time limit. The command changes nothing and prints one JSON object of facts to stdout:
+
+```json
+{"blas": "openblas-0.3.27", "simd_baseline": ["SSE", "SSE2", "SSE3"]}
+```
+
+The driving half captures that output as a provenance artifact and adds the facts to the context document's `observed_context` under the collector's name, here `observed_context.numpy-build.blas`. Translation therefore stays repeatable from artifacts, and a collector cannot collide with the runner's snapshot or with another collector. Facts are copied to every result of the invocation they were collected around. A collector that fails, times out, or prints anything else contributes no facts, and those results carry the warning `collector-failed`; nothing is substituted and the run continues.
+
+**Setup file.** The simplest collector runs no code. By convention the party that prepares an environment can write what it knows into `.benchx/setup.json` at the root of the benchmark suite, as one JSON object of facts in the same shape, and the party that runs benchmarks there needs to know nothing about how the environment was built:
+
+```json
+{"install": "source-build", "cflags": "-O3 -march=x86-64-v3", "blas": "openblas-0.3.27", "image": "sha256:4f1c..."}
+```
+
+The driving half reads the file before each harness invocation and treats it as the output of a collector named `setup`: captured as an artifact, placed under `observed_context.setup`, and with an unreadable file handled as a failed collector. An absent file is not an error. The file describes one prepared environment, so it is written by the setup step and never committed, and the suite lists `.benchx/` in its `.gitignore`; an untracked file would otherwise enter the benchmark tree id and mark the tree dirty (schema §4.1). When one checkout serves several environments, as in an `environments` run (schema §5.5), each environment sets `BENCHX_SETUP_FILE` to its own file. The file is a declaration, not an observation: the adapter reports what it says and whoever writes it owns its truth, so a fact that setup can declare belongs here and a command collector is for what nobody can declare.
+
+Collected facts are observed context and never enter identity on their own. A project that needs one to match, a BLAS backend for instance, promotes it into reported coordinates through a new mapping version and identity-policy schema (schema §4.2). Values should therefore be the same whenever the environment is the same: no timestamps, absolute paths, or process ids, and lists sorted where order carries no meaning.
+
+Recommended facts, none of them required:
+
+| Point | Collect |
+|---|---|
+| `before` | build options of the subject and its pinned libraries as the library itself reports them, such as `numpy.show_config()`, `pyarrow.build_info`, or selected `CMakeCache.txt` entries; compiler and flags; the BLAS and threading backends actually loaded; named environment variables that alter behaviour, never the whole environment, because results are published; governor, SMT, turbo, transparent huge pages, ASLR |
+| `after` | load, CPU frequency, temperature, and throttle counters over the invocation |
 
 ## 6. Adapter catalog
 
@@ -266,3 +295,4 @@ The remaining systems in the schema doc's review list were read for adapter less
 2. When a harness reports an aggregate the schema types differently from the harness's own definition, such as Google Benchmark's `cv`, is a `statistic` with the harness's name sufficient, or does the schema need a coefficient-of-variation summary type?
 3. Does the driving half own the per-attempt time limit, or is that an environment-policy setting the runner enforces around any adapter?
 4. How much of the context document is a formal contract artifact like the work order, versus a set of named arguments to the translating function? A formal document makes file-based translation replayable; arguments are simpler for the runner.
+5. Where are context collectors (§5.1) registered: in the work order, in project configuration, or beside the benchmark suite? The last versions them with the code they inspect, and lets a pull request change what runs with the harness's privileges.
