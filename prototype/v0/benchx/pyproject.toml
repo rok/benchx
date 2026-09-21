@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "benchx"
+version = "0.0.1"
+description = "Minimal prototype of a benchmark tool for the scientific Python ecosystem"
+requires-python = ">=3.11"
+dependencies = [
+    # format-nongpl pulls in the validators that make `format: uri` and
+    # `format: date-time` actually checked; without them they silently pass.
+    "jsonschema[format-nongpl]>=4.18",
+    "jsonpointer>=2.0",
+]
+
+[project.scripts]
+bx = "benchx.main:main"
+
+[dependency-groups]
+test = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
