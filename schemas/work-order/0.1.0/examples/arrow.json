@@ -1,0 +1,25 @@
+{
+  "workorder_version": 1,
+  "project": "arrow",
+  "source": {
+    "uri": "https://github.com/apache/arrow",
+    "type": "git"
+  },
+  "target": {
+    "build_dir": "/tmp/arrow-build-release",
+    "source_dir": "/tmp/arrow"
+  },
+  "suite": "arrow-compute-vector-selection-benchmark",
+  "filter": "TakeChunked.*",
+  "quantities": ["wall-time", "cpu-time"],
+  "repetitions": 10,
+  "minimum_sample_seconds": 0.5,
+  "provenance": {
+    "run_key": "local-2026-09-22-a",
+    "requested_by": "rok",
+    "reason": "baseline for chunk-resolver change",
+    "labels": {
+      "side": "baseline"
+    }
+  }
+}

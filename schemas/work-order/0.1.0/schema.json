@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:benchx:schema:work-order:0.1.0",
+  "title": "BenchX work order",
+  "description": "The runner's single input: what to run, against which target, how, and for whom. A runner executes one work order per invocation. See docs/design/work-order.md. The order carries only what its author decides; everything the runner can observe is captured by the runner, and comparison identity and series are never part of it.",
+  "$comment": "Rules the schema cannot express and the runner enforces: target paths are absolute; the suite exists in target.build_dir; filter uses the harness's syntax; every listed quantity is one the adapter can map; a setting the runner cannot apply is rejected, not ignored. Shared types are references into urn:benchx:schema:measurement-result:0.1.0, which validators must load alongside this schema, so every value the runner copies into results is valid there by construction.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workorder_version", "source", "target", "suite", "quantities", "provenance"],
+  "properties": {
+    "workorder_version": {
+      "description": "Work order contract version this object conforms to. Named differently from a result's schema_version so a loader can tell the two kinds apart.",
+      "const": 1
+    },
+    "project": {
+      "description": "Namespace for project-defined names and policy, copied to each result's project. Omit for an ad hoc run; its results are thin (result schema section 4.1).",
+      "$ref": "#/$defs/token"
+    },
+    "source": {
+      "description": "Designated subject source whose revisions form the history axis, copied to each result's source.",
+      "$ref": "#/$defs/sourceRef"
+    },
+    "target": {
+      "description": "The code to measure. Version 1 supports only an existing build directory; a revision to build and a prebuilt artifact need a new workorder_version.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["build_dir"],
+      "properties": {
+        "build_dir": {
+          "description": "Absolute path of the build directory holding the suite. The runner captures the build configuration from it into coordinates.subject.configuration.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "source_dir": {
+          "description": "Absolute path of the checkout the build was made from. The runner captures revision.key, provenance.subject_dirty, and provenance.subject_tree from it; if it cannot locate the checkout, subject_dirty is unknown and subject_tree is absent.",
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "suite": {
+      "description": "Suite to execute; for Google Benchmark, the benchmark binary's name inside target.build_dir.",
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "filter": {
+      "description": "Case filter in the harness's syntax, such as a Google Benchmark --benchmark_filter regular expression. Omit to run the whole suite.",
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "quantities": {
+      "description": "Quantity names to emit. Each becomes coordinates.quantity.name of one result per case; results for one case from one invocation share an attempt_key. Units come from the adapter mapping.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/token" }
+    },
+    "repetitions": {
+      "description": "Requested observations per case. The runner records the request as comparison_context.protocol.repetitions {\"mode\": \"fixed\", \"n_repeat\": N} and the realized counts as procedure.attempted_repetitions and procedure.completed_repetitions. Omit to use the harness default, which the runner then records.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "minimum_sample_seconds": {
+      "description": "Requested minimum duration of one observation, such as Google Benchmark --benchmark_min_time. Recorded as comparison_context.protocol.calibration {\"mode\": \"adaptive\", \"minimum_sample_seconds\": S}; the inner iteration count the harness chose goes to procedure.inner_iterations.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "provenance": {
+      "description": "Who ordered the run and why. Nothing here enters comparison identity.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_key"],
+      "properties": {
+        "run_key": {
+          "description": "Grouping key assigned by the run author, who is this order's author. Copied to provenance.run_key of every result.",
+          "$ref": "#/$defs/token"
+        },
+        "labels": {
+          "description": "Caller-supplied labels for selecting sides of a comparison, such as {\"side\": \"baseline\"}. Copied to provenance.labels.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "requested_by": {
+          "description": "Person or system that requested the run. Result provenance has no field for it, so the runner records it as provenance.info.requested_by.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "reason": {
+          "description": "Free-text reason for the run, recorded as provenance.info.reason.",
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "token": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/token" },
+    "nonEmptyString": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/nonEmptyString" },
+    "sourceRef": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/sourceRef" }
+  }
+}
