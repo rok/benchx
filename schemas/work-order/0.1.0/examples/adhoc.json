@@ -4,7 +4,11 @@
     "uri": "https://github.com/apache/arrow",
     "type": "git"
   },
+  "harness": {
+    "name": "google-benchmark"
+  },
   "target": {
+    "kind": "build_dir",
     "build_dir": "/home/rok/arrow/cpp/build"
   },
   "suite": "arrow-compute-vector-selection-benchmark",

@@ -5,15 +5,27 @@
     "uri": "https://github.com/apache/arrow",
     "type": "git"
   },
+  "harness": {
+    "name": "google-benchmark"
+  },
   "target": {
+    "kind": "build_dir",
     "build_dir": "/tmp/arrow-build-release",
     "source_dir": "/tmp/arrow"
   },
   "suite": "arrow-compute-vector-selection-benchmark",
   "filter": "TakeChunked.*",
   "quantities": ["wall-time", "cpu-time"],
-  "repetitions": 10,
-  "minimum_sample_seconds": 0.5,
+  "protocol": {
+    "repetitions": {
+      "mode": "fixed",
+      "levels": [{ "unit": "repetition", "n": 10 }]
+    },
+    "calibration": {
+      "mode": "adaptive",
+      "minimum_sample_seconds": 0.5
+    }
+  },
   "provenance": {
     "run_key": "local-2026-09-22-a",
     "requested_by": "rok",

@@ -2,7 +2,8 @@
 
 **Status:** Draft, September 2026. Accompanies
 [`schemas/work-order/0.1.0/schema.json`](../../schemas/work-order/0.1.0/schema.json);
-where the two differ, the schema wins. Builds on `runner.md` (#24),
+where the two differ, the schema wins. Version 1 is an unmerged draft, so
+it changes in place rather than by version bump. Builds on `runner.md` (#24),
 `prototype-design.md` (#27), `benchmark-result-schema.md` (#2), and
 `harness-adapter.md` (#31).
 
@@ -30,9 +31,15 @@ rule 1).
 **W3. Every field has a destination.** Each field either scopes execution or
 is copied into a named result field.
 
-**W4. Strict.** Every object rejects unknown properties, which catches typos
-and enforces W1 and W2 mechanically. Adding a field requires a new
-`workorder_version`.
+**W4. Strict, except the protocol.** Every object rejects unknown properties,
+which catches typos and enforces W1 and W2 mechanically. `protocol` is the
+one exception: harness-specific keys pass through, and the runner, not the
+schema, rejects a key it cannot apply (W5).
+
+**W4a. Every applied setting is recorded.** Whatever the runner applies goes
+into the result it produces, whether the order asked for it or the runner
+defaulted it. An order is therefore never the only place a run parameter
+exists.
 
 **W5. Order only what the runner applies.** Otherwise results would claim
 settings nobody applied. This is why version 1 has no environment policy.
@@ -44,37 +51,63 @@ settings nobody applied. This is why version 1 has no environment policy.
 | `workorder_version` | yes | Not copied; the integer `1` |
 | `project` | no | `project`; if omitted, results are thin (result schema section 4.1) |
 | `source` | yes | `source` |
-| `target.build_dir` | yes | Scopes execution; build configuration captured into `coordinates.subject.configuration` |
+| `harness` | yes | `comparison_context.harness` |
+| `target.kind` | yes | Selects the target shape: `build_dir` or `python_env` |
+| `target.build_dir` | `build_dir` kind | Scopes execution; build configuration captured into `coordinates.subject.configuration` |
+| `target.python` | `python_env` kind | Scopes execution; interpreter version, implementation, and build flags captured |
 | `target.source_dir` | no | `revision.key`, `provenance.subject_dirty`, and `provenance.subject_tree` captured from it |
 | `suite`, `filter` | `suite` only | Scope execution; matching cases become `coordinates.workload` |
 | `quantities` | yes | `coordinates.quantity.name`, one result per case and quantity |
-| `repetitions` | no | `comparison_context.protocol.repetitions`; realized counts in `procedure.attempted_repetitions` and `procedure.completed_repetitions` |
-| `minimum_sample_seconds` | no | `comparison_context.protocol.calibration`; realized count in `procedure.inner_iterations` |
+| `protocol` | no | `comparison_context.protocol`, verbatim; realized counterparts in `procedure` |
 | `provenance.run_key` | yes | `provenance.run_key` |
 | `provenance.labels` | no | `provenance.labels` |
 | `provenance.requested_by`, `reason` | no | `provenance.info.requested_by`, `provenance.info.reason` |
 
-**Target.** Version 1 supports only an existing build directory, the one kind
-the prototype runner accepts. The runner refuses the order if the suite is
-missing. If it can't locate the checkout, `subject_dirty` is `unknown` and
-`subject_tree` is absent; the `revision.dirty` flag in
-`prototype-design.md` is superseded by these. Paths should be absolute.
+**Harness.** `harness` names the harness that runs the suite, such as
+`google-benchmark` or `pyperf`. It selects the adapter and fixes how
+`suite`, `filter`, and the protocol keys are read, so nothing else in the
+order can be interpreted without it. `version`, if given, is what the order
+requires; the runner records the version it actually ran.
 
-**Suite and filter.** Both have Google Benchmark semantics in version 1: a
-binary name and a `--benchmark_filter` regex. The driving half should list
-the matching cases before running (`--benchmark_list_tests`), so a truncated
-run shows up as missing cases rather than a shorter suite.
+**Target.** Two kinds, tagged by `kind`. A `build_dir` target names an
+existing build directory holding a compiled suite. A `python_env` target
+names the interpreter that runs it, with the subject and the harness
+installed. A revision to build and a prebuilt artifact (`runner.md`) are
+future kinds. The runner refuses the order if the suite is missing. If it
+can't locate the checkout, `subject_dirty` is `unknown` and `subject_tree`
+is absent; the `revision.dirty` flag in `prototype-design.md` is superseded
+by these. Paths should be absolute.
+
+**Suite and filter.** Both are read in the named harness's terms: for Google
+Benchmark a binary name and a `--benchmark_filter` regex; for pyperf a
+script path, with no filter support at all. The driving half should fix the
+planned set of cases before running, so a truncated run shows up as missing
+cases rather than a shorter suite. Harnesses that cannot list their cases
+make that impossible, which is an open question below.
 
 **Quantities.** Any name the result schema accepts as a quantity name (a
 `token`) is accepted; Appendix A is the shared vocabulary, not a rule. Units
 come from the adapter mapping, not the order. Quantities from one invocation
 share an `attempt_key`.
 
-**Precision.** Requested values go in `comparison_context.protocol`; realized
-values go in `procedure`. If a setting is omitted, the driving half records
-the harness default. `comparison_context` is an open object in the result
-schema, so the Appendix B spellings are a convention, not something
-validation checks.
+**Protocol.** `protocol` holds the intended acquisition settings in the
+result schema's Appendix B spellings, and the runner copies it verbatim into
+`comparison_context.protocol`; realized counterparts go in `procedure`. Three
+keys are constrained here:
+
+- `repetitions` is a list of levels, outermost first, because harnesses
+  repeat at different levels: Google Benchmark repeats inside one process
+  (one level), while pyperf spawns processes that each produce several
+  values (two levels).
+- `calibration` is either `adaptive` with a `minimum_sample_seconds`, or
+  `fixed` with an iteration count.
+- `warmup` is a count, a duration, or none.
+
+Anything else passes through for the adapter to interpret (W4). Omitting
+`protocol` means harness defaults apply, and the runner must record what it
+actually used (W4a); it is never a licence to leave settings unrecorded.
+`comparison_context` is an open object in the result schema, so these
+spellings are a convention that ingest does not check.
 
 **Provenance.** `run_key` is required because only the order's author can
 supply it; the result schema makes the run author responsible for it.
@@ -128,13 +161,31 @@ that each break one rule should be added.
 
 ## 7. Open questions
 
-**Harness.** Nothing names the harness, so `suite` and `filter` only work for
-Google Benchmark. Proposal: a required `harness` object, such as
-`{"name": "google-benchmark"}`.
+**Harness name: open value or closed enum?** `harness.name` is an open
+token today, so a new adapter ships without touching the schema and the
+runner rejects a name it has no adapter for. A closed enum would catch typos
+at validation time instead, at the cost of a schema change per harness.
 
-**Protocol.** Only repetitions and minimum sample time can be requested.
-Proposal: a `protocol` object in Appendix B spellings, copied into
-`comparison_context.protocol`, with both existing settings moved inside it.
+**Target design.** Three parts are unsettled. Should `suite` stay at the top
+level with a harness-specific meaning (a binary name, a script path), or
+move into the target, which would let each kind name its own? For
+`python_env`, is the right handle the interpreter path (as now, matching
+pyperf's own `--python`), a virtual environment directory, or a project
+directory the runner syncs itself? And should the two future kinds, a
+revision to build and a prebuilt artifact, be designed now so the tag
+vocabulary is settled, or added when a runner can use them?
+
+**Protocol vocabulary.** The level list is new spelling, so where does it
+belong? Appendix B of the result schema is the shared vocabulary, so it
+should probably define `repetitions.levels` and the level units, which makes
+this a result schema doc change even though `comparison_context` is open and
+validates it today either way. The alternative spelling is a flat
+`{"n_repeat": 3, "n_process": 20}`, shorter for the two cases we have and
+harder to extend. Either way `procedure` needs a matching realized form:
+it currently has one `attempted_repetitions` and one
+`completed_repetitions`, with no way to say that 20 processes were planned
+and 18 completed, and that each ran 3 values. That is a result schema
+change, not just a doc one.
 
 **Rounds.** Interleaved comparisons need alternating orders. The result
 schema already has `procedure.round`, zero-based, kept by a retry, and
@@ -143,8 +194,8 @@ into it. `procedure.slot`, the realized position across all sides, can't be
 assigned by a runner that sees one order; it needs whoever coordinates the
 sides.
 
-**Target kinds.** A revision to build and a prebuilt artifact
-(`runner.md`) need `workorder_version: 2`.
+**Deferred target kinds.** A revision to build and a prebuilt artifact
+(`runner.md`) are not designed yet; see the target question above.
 
 **Environment policy.** Add a `{name, version}` reference once a runner
 enforces policies.

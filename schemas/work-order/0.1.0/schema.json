@@ -3,10 +3,18 @@
   "$id": "urn:benchx:schema:work-order:0.1.0",
   "title": "BenchX work order",
   "description": "The runner's single input: what to run, against which target, how, and for whom. A runner executes one work order per invocation. See docs/design/work-order.md. The order carries only what its author decides; everything the runner can observe is captured by the runner, and comparison identity and series are never part of it.",
-  "$comment": "Rules the schema cannot express and the runner enforces: target paths are absolute; the suite exists in target.build_dir; filter uses the harness's syntax; every listed quantity is one the adapter can map; a setting the runner cannot apply is rejected, not ignored. Shared types are references into urn:benchx:schema:measurement-result:0.1.0, which validators must load alongside this schema, so every value the runner copies into results is valid there by construction.",
+  "$comment": "Rules the schema cannot express and the runner enforces: target paths are absolute; the suite exists in the target; filter and suite use the named harness's syntax; every listed quantity is one the adapter can map; a setting the runner cannot apply is rejected, not ignored; every setting the runner does apply is recorded in the result it produces. Shared types are references into urn:benchx:schema:measurement-result:0.1.0, which validators must load alongside this schema, so every value the runner copies into results is valid there by construction.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["workorder_version", "source", "target", "suite", "quantities", "provenance"],
+  "required": [
+    "workorder_version",
+    "source",
+    "harness",
+    "target",
+    "suite",
+    "quantities",
+    "provenance"
+  ],
   "properties": {
     "workorder_version": {
       "description": "Work order contract version this object conforms to. Named differently from a result's schema_version so a loader can tell the two kinds apart.",
@@ -20,21 +28,70 @@
       "description": "Designated subject source whose revisions form the history axis, copied to each result's source.",
       "$ref": "#/$defs/sourceRef"
     },
-    "target": {
-      "description": "The code to measure. Version 1 supports only an existing build directory; a revision to build and a prebuilt artifact need a new workorder_version.",
+    "harness": {
+      "description": "Harness that runs the suite. Selects the adapter and fixes how suite, filter, and protocol keys are read. Recorded in each result's comparison_context.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["build_dir"],
+      "required": [
+        "name"
+      ],
       "properties": {
-        "build_dir": {
-          "description": "Absolute path of the build directory holding the suite. The runner captures the build configuration from it into coordinates.subject.configuration.",
-          "$ref": "#/$defs/nonEmptyString"
+        "name": {
+          "description": "Harness name, such as google-benchmark or pyperf. An open value: the runner rejects a name it has no adapter for.",
+          "$ref": "#/$defs/token"
         },
-        "source_dir": {
-          "description": "Absolute path of the checkout the build was made from. The runner captures revision.key, provenance.subject_dirty, and provenance.subject_tree from it; if it cannot locate the checkout, subject_dirty is unknown and subject_tree is absent.",
+        "version": {
+          "description": "Harness version the order requires, if any. The runner records the version it ran.",
           "$ref": "#/$defs/nonEmptyString"
         }
       }
+    },
+    "target": {
+      "description": "Where the code to measure lives. One of two kinds; a revision to build and a prebuilt artifact are future kinds.",
+      "oneOf": [
+        {
+          "title": "Existing build directory",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "build_dir"
+          ],
+          "properties": {
+            "kind": {
+              "const": "build_dir"
+            },
+            "build_dir": {
+              "description": "Absolute path of the build directory holding the suite. The runner captures the build configuration from it into coordinates.subject.configuration.",
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "source_dir": {
+              "$ref": "#/$defs/sourceDir"
+            }
+          }
+        },
+        {
+          "title": "Python environment",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "python"
+          ],
+          "properties": {
+            "kind": {
+              "const": "python_env"
+            },
+            "python": {
+              "description": "Absolute path of the Python interpreter that runs the suite, with the subject and the harness installed. The runner captures the interpreter version, implementation, and build flags.",
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "source_dir": {
+              "$ref": "#/$defs/sourceDir"
+            }
+          }
+        }
+      ]
     },
     "suite": {
       "description": "Suite to execute; for Google Benchmark, the benchmark binary's name inside target.build_dir.",
@@ -49,23 +106,155 @@
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": { "$ref": "#/$defs/token" }
+      "items": {
+        "$ref": "#/$defs/token"
+      }
     },
-    "repetitions": {
-      "description": "Requested observations per case. The runner records the request as comparison_context.protocol.repetitions {\"mode\": \"fixed\", \"n_repeat\": N} and the realized counts as procedure.attempted_repetitions and procedure.completed_repetitions. Omit to use the harness default, which the runner then records.",
-      "type": "integer",
-      "minimum": 1
-    },
-    "minimum_sample_seconds": {
-      "description": "Requested minimum duration of one observation, such as Google Benchmark --benchmark_min_time. Recorded as comparison_context.protocol.calibration {\"mode\": \"adaptive\", \"minimum_sample_seconds\": S}; the inner iteration count the harness chose goes to procedure.inner_iterations.",
-      "type": "number",
-      "exclusiveMinimum": 0
+    "protocol": {
+      "description": "Intended acquisition settings, in the result schema's Appendix B spellings, copied verbatim into each result's comparison_context.protocol; realized counterparts go to procedure. The runner fills in every setting it applies and rejects a key it cannot apply, so no applied setting goes unrecorded. This is the one open object in a work order: harness-specific keys pass through unchanged.",
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "repetitions": {
+          "description": "Independent repetitions of one case, outermost level first. One level for a harness that repeats inside a single process (Google Benchmark); two for one that also spawns processes (pyperf).",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "levels"
+          ],
+          "properties": {
+            "mode": {
+              "const": "fixed"
+            },
+            "levels": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "unit",
+                  "n"
+                ],
+                "properties": {
+                  "unit": {
+                    "description": "What one repetition at this level is: repetition, process, value. An open value.",
+                    "$ref": "#/$defs/token"
+                  },
+                  "n": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "calibration": {
+          "description": "How the iteration count inside one repetition is chosen: adaptive to a minimum sample duration, or fixed by the author.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "adaptive",
+                "fixed"
+              ]
+            },
+            "minimum_sample_seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "n_iterations": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "const": "adaptive"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "minimum_sample_seconds"
+                ],
+                "not": {
+                  "required": [
+                    "n_iterations"
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "required": [
+                  "mode"
+                ],
+                "properties": {
+                  "mode": {
+                    "const": "fixed"
+                  }
+                }
+              },
+              "then": {
+                "required": [
+                  "n_iterations"
+                ],
+                "not": {
+                  "required": [
+                    "minimum_sample_seconds"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "warmup": {
+          "description": "Discarded measurements before the recorded ones.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "fixed",
+                "time",
+                "none"
+              ]
+            },
+            "n_warmup": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "seconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      }
     },
     "provenance": {
       "description": "Who ordered the run and why. Nothing here enters comparison identity.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["run_key"],
+      "required": [
+        "run_key"
+      ],
       "properties": {
         "run_key": {
           "description": "Grouping key assigned by the run author, who is this order's author. Copied to provenance.run_key of every result.",
@@ -74,7 +263,9 @@
         "labels": {
           "description": "Caller-supplied labels for selecting sides of a comparison, such as {\"side\": \"baseline\"}. Copied to provenance.labels.",
           "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/nonEmptyString" }
+          "additionalProperties": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
         },
         "requested_by": {
           "description": "Person or system that requested the run. Result provenance has no field for it, so the runner records it as provenance.info.requested_by.",
@@ -88,8 +279,18 @@
     }
   },
   "$defs": {
-    "token": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/token" },
-    "nonEmptyString": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/nonEmptyString" },
-    "sourceRef": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/sourceRef" }
+    "token": {
+      "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/token"
+    },
+    "nonEmptyString": {
+      "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/nonEmptyString"
+    },
+    "sourceRef": {
+      "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/sourceRef"
+    },
+    "sourceDir": {
+      "description": "Absolute path of the checkout the target was built or installed from. The runner captures revision.key, provenance.subject_dirty, and provenance.subject_tree from it; if it cannot locate the checkout, subject_dirty is unknown and subject_tree is absent.",
+      "$ref": "#/$defs/nonEmptyString"
+    }
   }
 }
