@@ -9,6 +9,7 @@
   "required": [
     "workorder_version",
     "source",
+    "benchmark",
     "harness",
     "target",
     "suite",
@@ -24,9 +25,84 @@
       "description": "Namespace for project-defined names and policy, copied to each result's project. Omit for an ad hoc run; its results are thin (result schema section 4.1).",
       "$ref": "#/$defs/token"
     },
+    "subject": {
+      "description": "What to call the subject under test, copied to coordinates.subject.name. Optional: when it is absent the runner derives a name from the source URI, which is fine for an ad hoc run but wrong when one repository holds several subjects, or when a fork, mirror, or rename would split one subject's history. A name is the author's decision, not something a runner observes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/token"
+        }
+      }
+    },
     "source": {
       "description": "Designated subject source whose revisions form the history axis, copied to each result's source.",
       "$ref": "#/$defs/sourceRef"
+    },
+    "benchmark": {
+      "description": "Which code defines and executes the benchmarks. Results carry it as the top-level benchmark, and the runner captures its revision, dirty state, and tree from the checkout named here. Stated rather than inferred, because only the author knows whether the benchmarks are the subject's own: a wrong benchmark revision hides a change in the benchmark definitions and makes it look like a change in the subject.",
+      "oneOf": [
+        {
+          "title": "Benchmarks in the subject's checkout",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "subject"
+            }
+          }
+        },
+        {
+          "title": "Benchmarks in their own repository",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "checkout"
+          ],
+          "properties": {
+            "kind": {
+              "const": "repository"
+            },
+            "source": {
+              "$ref": "#/$defs/sourceRef"
+            },
+            "checkout": {
+              "description": "Absolute path of the benchmark checkout. The runner captures the benchmark revision, provenance.benchmark_dirty, and provenance.benchmark_tree from it, and resolves a suite given as a path against it.",
+              "$ref": "#/$defs/nonEmptyString"
+            }
+          }
+        },
+        {
+          "title": "Benchmarks in a directory with no version control",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "const": "directory"
+            },
+            "path": {
+              "description": "Absolute path of the benchmark files, such as a pyperformance installed into the target environment. There is no revision to capture, so the runner reports no benchmark revision and records provenance.benchmark_dirty as dirty with a content hash of the directory as benchmark_tree: an unversioned tree cannot be shown to be clean.",
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "source": {
+              "description": "Upstream source of these files, when the author knows it.",
+              "$ref": "#/$defs/sourceRef"
+            }
+          }
+        }
+      ]
     },
     "harness": {
       "description": "Harness that runs the suite. Selects the adapter and fixes how suite, filter, and protocol keys are read. Recorded in each result's comparison_context.",

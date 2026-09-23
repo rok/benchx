@@ -5,6 +5,14 @@
     "uri": "https://github.com/scipy/scipy",
     "type": "git"
   },
+  "benchmark": {
+    "kind": "repository",
+    "source": {
+      "uri": "https://github.com/python/pyperformance",
+      "type": "git"
+    },
+    "checkout": "/tmp/pyperformance"
+  },
   "harness": {
     "name": "pyperf"
   },
@@ -13,7 +21,7 @@
     "python": "/tmp/scipy-bench/.venv/bin/python",
     "source_dir": "/tmp/scipy"
   },
-  "suite": "benchmarks/bench_optimize.py",
+  "suite": "pyperformance/data-files/benchmarks/bm_nbody/run_benchmark.py",
   "quantities": [
     "wall-time"
   ],

@@ -1,9 +1,15 @@
 {
   "workorder_version": 1,
   "project": "arrow",
+  "subject": {
+    "name": "arrow-cpp"
+  },
   "source": {
     "uri": "https://github.com/apache/arrow",
     "type": "git"
+  },
+  "benchmark": {
+    "kind": "subject"
   },
   "harness": {
     "name": "google-benchmark"

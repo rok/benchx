@@ -59,6 +59,11 @@ not name is at least visible.
 | `workorder_version` | yes | Not copied; the integer `1` |
 | `project` | no | `project`; if omitted, results are thin (result schema section 4.1) |
 | `source` | yes | `source` |
+| `subject.name` | no | `coordinates.subject.name`; derived from the source URI when absent |
+| `benchmark.kind` | yes | `subject`, `repository`, or `directory` |
+| `benchmark.source` | `repository` kind | `benchmark.source` |
+| `benchmark.checkout` | `repository` kind | `benchmark.revision`, `provenance.benchmark_dirty`, and `provenance.benchmark_tree` captured from it |
+| `benchmark.path` | `directory` kind | No revision; `benchmark_dirty` is `dirty` and `benchmark_tree` is a content hash of the directory |
 | `harness` | yes | `comparison_context.harness` |
 | `target.kind` | yes | Selects the target shape: `build_dir` or `python_env` |
 | `target.build_dir` | `build_dir` kind | Scopes execution; build configuration captured into `coordinates.subject.configuration` |
@@ -79,6 +84,36 @@ not name is at least visible.
 `suite`, `filter`, and the protocol keys are read, so nothing else in the
 order can be interpreted without it. `version`, if given, is what the order
 requires; the runner records the version it actually ran.
+
+**Subject name.** `subject.name` is what results are keyed on as
+`coordinates.subject.name`. It is optional, and a runner that is not told one
+derives it from the source URI. That is fine for an ad hoc run and wrong in
+two common cases: one repository holding several subjects, where a C++
+library and its Python bindings derive to the same name, and a fork, mirror,
+or rename, where one subject's history splits in two. Naming is the author's
+decision, so state it whenever either applies.
+
+**Benchmark.** Benchmarks need not live in the repository being measured:
+pyperformance is its own project, and plenty of teams keep a benchmark
+repository apart from the library. So the order states where they are.
+`kind: "subject"` says they are in the subject's own checkout;
+`kind: "repository"` names their source and the checkout to read, and a
+`suite` given as a path is resolved against that checkout. A third kind,
+`directory`, covers benchmarks with no version control at all, such as a
+pyperformance installed into the target environment: there is no revision to
+report, so the runner records `benchmark_dirty` as `dirty`, since an
+unversioned tree cannot be shown to be clean, and hashes the directory for
+`benchmark_tree`, which the result schema allows as a native equivalent of a
+git tree id. An upstream `source` may be given when the author knows it.
+
+The field is required rather than defaulted, because every result carries a
+`benchmark_dirty` flag and most carry a benchmark revision, and a wrong one
+is worse than a missing one: it hides a change in the benchmark definitions
+and makes it look like a change in the subject. Writing `{"kind": "subject"}`
+costs one line and makes "the benchmarks are the subject's own" a stated fact
+rather than an assumption nobody made. As with the subject, only the
+revision, dirty state, and tree are captured; which repository it is remains
+the author's to state.
 
 **Target.** Two kinds, tagged by `kind`. A `build_dir` target names an
 existing build directory holding a compiled suite. A `python_env` target
@@ -254,13 +289,12 @@ probably the most the runner can do.
 case names. If an order also sets a parameter of that name, one of them has
 to win, and the adapter doc has to say which.
 
-**Benchmark and subject.** Every result requires
-`provenance.benchmark_dirty`, and a result without a top-level `benchmark`
-(`{source, revision}`) is thin even when the order names a project. Results
-also require `coordinates.subject.name`. The order determines none of these.
-A runner can infer them when benchmarks live in the subject repository, as
-Arrow's do; otherwise the order needs an optional benchmark source and
-checkout, and possibly a subject name.
+**Benchmarks with no revision.** The `directory` kind produces a result with
+no benchmark revision, but the result schema requires `revision` inside
+`benchmark`, so such a result can only be emitted once that field is
+optional. Until then these runs produce thin results. The result schema doc
+has to decide whether a benchmark may be identified by tree alone, which is
+the honest description of an unversioned directory.
 
 **Versioning.** The work order follows the result schema's convention:
 `0.1.0` in the path and `$id`, and an integer constant in the document (`5`
