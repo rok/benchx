@@ -15,17 +15,30 @@
   },
   "suite": "arrow-compute-vector-selection-benchmark",
   "filter": "TakeChunked.*",
-  "quantities": ["wall-time", "cpu-time"],
+  "quantities": [
+    "wall-time",
+    "cpu-time"
+  ],
+  "environment_variables": {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1"
+  },
   "protocol": {
     "repetitions": {
       "mode": "fixed",
-      "levels": [{ "unit": "repetition", "n": 10 }]
+      "levels": [
+        {
+          "unit": "repetition",
+          "n": 10
+        }
+      ]
     },
     "calibration": {
       "mode": "adaptive",
       "minimum_sample_seconds": 0.5
     }
   },
+  "timeout_seconds": 900,
   "provenance": {
     "run_key": "local-2026-09-22-a",
     "requested_by": "rok",

@@ -3,7 +3,7 @@
   "$id": "urn:benchx:schema:work-order:0.1.0",
   "title": "BenchX work order",
   "description": "The runner's single input: what to run, against which target, how, and for whom. A runner executes one work order per invocation. See docs/design/work-order.md. The order carries only what its author decides; everything the runner can observe is captured by the runner, and comparison identity and series are never part of it.",
-  "$comment": "Rules the schema cannot express and the runner enforces: target paths are absolute; the suite exists in the target; filter and suite use the named harness's syntax; every listed quantity is one the adapter can map; a setting the runner cannot apply is rejected, not ignored; every setting the runner does apply is recorded in the result it produces. Shared types are references into urn:benchx:schema:measurement-result:0.1.0, which validators must load alongside this schema, so every value the runner copies into results is valid there by construction.",
+  "$comment": "Rules the schema cannot express and the runner enforces: target paths are absolute; the suite exists in the target; filter and suite use the named harness's syntax; every listed quantity is one the adapter can map; a name may not appear in both environment_variables and workload_parameters; a setting the runner cannot apply is rejected, not ignored; every setting the runner does apply is recorded in the result it produces. The runner inherits the shell it was started from, applies environment_variables on top, and records the resulting child environment in each result's observed_context, whatever process model the harness uses internally. Shared types are references into urn:benchx:schema:measurement-result:0.1.0, which validators must load alongside this schema, so every value the runner copies into results is valid there by construction.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -108,6 +108,25 @@
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/token"
+      }
+    },
+    "environment_variables": {
+      "description": "Environment variables set for the measured process, on top of the environment the runner inherited. They are workload coordinates, not machine facts: each name and value is copied into coordinates.workload.parameters, so a run at OMP_NUM_THREADS=1 and one at 10 are different workload variants and never pool. Values are strings, and one order carries one assignment; an array, for a sweep, would multiply the planned set and is left to a later version.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "workload_parameters": {
+      "description": "Parameters passed to the runner or the harness, never as environment variables. Copied into coordinates.workload.parameters alongside the environment variables, so a name may not appear in both maps.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/parameterValue"
       }
     },
     "protocol": {
@@ -248,6 +267,11 @@
         }
       }
     },
+    "timeout_seconds": {
+      "description": "Limit on measuring one workload variant, in seconds. A variant stopped by it is reported as an error whose reason names the timeout; the limit is recorded in the result's procedure. A runner that cannot apply the limit to a single variant rejects the order rather than running without one. This is a cap on execution, not an acquisition setting, so it sits outside protocol.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
     "provenance": {
       "description": "Who ordered the run and why. Nothing here enters comparison identity.",
       "type": "object",
@@ -291,6 +315,9 @@
     "sourceDir": {
       "description": "Absolute path of the checkout the target was built or installed from. The runner captures revision.key, provenance.subject_dirty, and provenance.subject_tree from it; if it cannot locate the checkout, subject_dirty is unknown and subject_tree is absent.",
       "$ref": "#/$defs/nonEmptyString"
+    },
+    "parameterValue": {
+      "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/parameterValue"
     }
   }
 }

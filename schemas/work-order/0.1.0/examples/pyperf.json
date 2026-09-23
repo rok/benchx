@@ -14,13 +14,24 @@
     "source_dir": "/tmp/scipy"
   },
   "suite": "benchmarks/bench_optimize.py",
-  "quantities": ["wall-time"],
+  "quantities": [
+    "wall-time"
+  ],
+  "environment_variables": {
+    "OMP_NUM_THREADS": "1"
+  },
   "protocol": {
     "repetitions": {
       "mode": "fixed",
       "levels": [
-        { "unit": "process", "n": 20 },
-        { "unit": "value", "n": 3 }
+        {
+          "unit": "process",
+          "n": 20
+        },
+        {
+          "unit": "value",
+          "n": 3
+        }
       ]
     },
     "calibration": {
@@ -32,6 +43,7 @@
       "n_warmup": 1
     }
   },
+  "timeout_seconds": 1800,
   "provenance": {
     "run_key": "local-2026-09-23-a",
     "requested_by": "ev-br",

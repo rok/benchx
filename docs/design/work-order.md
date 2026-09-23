@@ -44,6 +44,14 @@ exists.
 **W5. Order only what the runner applies.** Otherwise results would claim
 settings nobody applied. This is why version 1 has no environment policy.
 
+**W6. The environment is inherited, and the order overrides it.** The runner
+passes the shell it was started from to the measured process and applies
+`environment_variables` on top, whatever process model the harness uses
+internally. An adapter that cannot guarantee that rejects the order rather
+than measuring something else. The runner records the resulting child
+environment in each result's `observed_context`, so a variable the order did
+not name is at least visible.
+
 ## 3. Fields
 
 | Field | Required | In each result |
@@ -58,7 +66,10 @@ settings nobody applied. This is why version 1 has no environment policy.
 | `target.source_dir` | no | `revision.key`, `provenance.subject_dirty`, and `provenance.subject_tree` captured from it |
 | `suite`, `filter` | `suite` only | Scope execution; matching cases become `coordinates.workload` |
 | `quantities` | yes | `coordinates.quantity.name`, one result per case and quantity |
+| `environment_variables` | no | `coordinates.workload.parameters`, by name |
+| `workload_parameters` | no | `coordinates.workload.parameters`, by name |
 | `protocol` | no | `comparison_context.protocol`, verbatim; realized counterparts in `procedure` |
+| `timeout_seconds` | no | `procedure`; a variant stopped by it is an `error` whose reason names the timeout |
 | `provenance.run_key` | yes | `provenance.run_key` |
 | `provenance.labels` | no | `provenance.labels` |
 | `provenance.requested_by`, `reason` | no | `provenance.info.requested_by`, `provenance.info.reason` |
@@ -108,6 +119,32 @@ Anything else passes through for the adapter to interpret (W4). Omitting
 actually used (W4a); it is never a licence to leave settings unrecorded.
 `comparison_context` is an open object in the result schema, so these
 spellings are a convention that ingest does not check.
+
+**Environment variables.** `environment_variables` sets variables for the
+measured process on top of the inherited environment (W6). They are workload
+coordinates, not machine facts: each name and value goes into
+`coordinates.workload.parameters`, so a run at `OMP_NUM_THREADS=1` and one at
+`10` are different workload variants that never pool, and both can sit in one
+suite. Thread control has no single spelling — `OMP_NUM_THREADS`,
+`MKL_NUM_THREADS`, `OPENBLAS_NUM_THREADS` and others — so the map is open and
+the names are written out. A variant that set two of them is not the same as
+one that set three, and recording the names keeps that distinction. Values
+are strings, and one order carries one assignment: an array, for a sweep,
+would multiply the planned set and is left to a later version.
+
+Machine state stays out: build flags, processor settings, and governors
+belong to the environment and its policy, not to the order.
+
+**Workload parameters.** `workload_parameters` are passed to the runner or
+the harness and never set an environment variable. They land in
+`coordinates.workload.parameters` too, so a name may not appear in both maps
+and the runner rejects an order where one does.
+
+**Timeout.** `timeout_seconds` caps the measurement of one workload variant.
+It sits outside `protocol` because it is a limit on execution rather than an
+acquisition setting, and it changes nothing unless it fires. A runner that
+cannot scope the limit to a single variant rejects the order rather than
+applying it more coarsely.
 
 **Provenance.** `run_key` is required because only the order's author can
 supply it; the result schema makes the run author responsible for it.
@@ -197,8 +234,25 @@ sides.
 **Deferred target kinds.** A revision to build and a prebuilt artifact
 (`runner.md`) are not designed yet; see the target question above.
 
-**Environment policy.** Add a `{name, version}` reference once a runner
-enforces policies.
+**Environment policy.** The boundary is settled: machine state is policy,
+the subject's invocation environment is the order. What remains is a
+`{name, version}` reference to a named policy once a runner enforces one.
+
+**Recording the inherited environment.** W6 has the runner record the child
+environment in every result, which puts tokens and credentials from a CI
+shell into a shared store. Record it whole, redact by name pattern and say
+so, or record names without values outside an allowlist? The result schema
+doc has to settle this alongside the field.
+
+**Ambient variables the order did not name.** Since only ordered variables
+are coordinates, an inherited `MKL_NUM_THREADS` changes the measurement while
+identity says nothing about it. A quality warning when the order sets some
+known thread variables and the inherited environment carries others is
+probably the most the runner can do.
+
+**Harness-reported parameters.** Google Benchmark puts `threads:N` in its own
+case names. If an order also sets a parameter of that name, one of them has
+to win, and the adapter doc has to say which.
 
 **Benchmark and subject.** Every result requires
 `provenance.benchmark_dirty`, and a result without a top-level `benchmark`
