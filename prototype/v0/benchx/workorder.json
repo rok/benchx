@@ -1,0 +1,11 @@
+{
+  "workorder_version": 1,
+  "project": "arrow",
+  "source": {"uri": "https://github.com/apache/arrow", "type": "git"},
+  "target": {"build_dir": "/tmp/bench-plain"},
+  "suite": "arrow-compute-vector-selection-benchmark",
+  "filter": "TakeChunked.*",
+  "repetitions": 10,
+  "quantities": ["wall-time"],
+  "provenance": {"run_key": "local-2026-08-30-a", "requested_by": "rok"}
+}

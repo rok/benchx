@@ -1,0 +1,22 @@
+{
+  "project": "arrow",
+  "source": {
+    "uri": "https://github.com/apache/arrow",
+    "type": "git"
+  },
+  "target": {
+    "build_dir": "/tmp/arrow-build-release"
+  },
+  "suite": "arrow-compute-vector-selection-benchmark",
+  "filter": "TakeChunked.*",
+  "repetitions": 10,
+  "quantities": ["wall-time", "cpu-time"],
+  "provenance": {
+    "run_key": "local-2026-09-22-a",
+    "requested_by": "rok",
+    "reason": "baseline for chunk-resolver change",
+    "labels": {
+      "side": "baseline"
+    }
+  }
+}
