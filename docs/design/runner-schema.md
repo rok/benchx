@@ -59,7 +59,16 @@ A work order (`benchx/work-order/0.1.0`) has four required groups matching `runn
 
 ### 3.2 Draft and resolved orders
 
-A person or tool may write a **draft**: a branch name instead of a commit, `include` globs instead of cases, a policy without a version. The runner's resolve stage turns it into a **resolved** order, with full commit ids, a pinned policy version, and an expanded `plan`, and records it as a provenance artifact before running anything. Results cite the resolved order's hash, never the draft's.
+A person or tool may write a **draft**: a branch name instead of a commit, `include` globs instead of cases, a policy without a version. Before execution it becomes a **resolved** order, with full commit ids, a pinned policy version, and an expanded `plan`. Results cite the resolved order's hash, never the draft's.
+
+Resolution happens as early as possible, and the runner fills in only what is left:
+
+- **Resolution only fills gaps.** It never changes a field that is already fixed, so a fully resolved order passes through the runner unchanged.
+- **The requester resolves shared facts.** The scheduler, CI job, or workbench fixes everything that must be identical across sibling orders in a `run_key`: commit ids for branch names, policy versions, precision defaults, and the case list when it is knowable without a build. Resolving these once is what keeps both sides of a comparison on the same values.
+- **The runner resolves only facts about its own machine.** These are working-tree state (HEAD, dirty flag, tree id), the case list for harnesses that enumerate cases only after a build, and the values actually enforced by the policy. It then records the resolved order as a provenance artifact before execution starts.
+- **The runner refuses unresolved shared fields.** A draft that still names a branch, or a policy without a version, is refused rather than resolved against the runner's local clone or cache. That would infer the run from leftovers on the machine, which `runner.md` principle 1 forbids.
+
+So a person on a laptop can hand the runner a loose draft whose target is `working_tree`, which is only meaningful on that machine anyway, while a fleet order arrives already pinned.
 
 Where results are delivered (store URL, local file) is an invocation argument, not an order field. Replaying an order on another machine shouldn't silently post to the original store.
 
@@ -263,7 +272,7 @@ WSL2 exposes no governor, temperature, or throttle counters, so all three are re
 
 1. **Multi-node benchmarks.** 0.1.0 targets one node per order. Should a later version allow a node group (`target.nodes[]` plus a coordinator role), or should a distributed benchmark stay a harness concern behind a single coordinator runner?
 2. **Who stores resolved orders?** The order doubles as the run manifest, but the runner is store-unaware. Does the runner upload the order as an artifact alongside results, or does the requester (scheduler, workbench) keep it?
-3. **Plan expansion after build.** Some harnesses can only list their cases after the build exists. Is it acceptable for the `plan` to be finalized between "resolve target" and "execute", or must `include` filters name concrete cases?
+3. **Build failure before the plan exists.** §3.2 lets the runner expand `plan` after the build for harnesses that enumerate cases only then. If that build fails there are no plan entries to attach `error` results to. Does the runner emit a single order-level `build_failed` result, and under which workload coordinates?
 4. **Should the observation-record convention move into the result schema?** Today `observed_context` is an open object. Making `{value, status, when, source}` normative there would let every producer, not just this runner, mark facts `unavailable`.
 5. **Sampling overhead.** Sampling temperature and frequency during execution can itself disturb the measurement. What default interval (e.g. 1 s) and core placement keep it negligible, and should the policy be able to turn sampling off?
 6. **Build caching** (`runner.md` open question 1). `build.cache` is modeled as `reuse` | `fresh` | `require-cached`. Is a build its own cacheable artifact with a hash that the order can reference instead?
