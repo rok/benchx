@@ -1,0 +1,22 @@
+{
+  "workorder_version": 1,
+  "source": {
+    "uri": "https://github.com/apache/arrow",
+    "type": "git"
+  },
+  "benchmark": {
+    "kind": "subject"
+  },
+  "harness": {
+    "name": "google-benchmark"
+  },
+  "target": {
+    "kind": "build_dir",
+    "build_dir": "/home/rok/arrow/cpp/build"
+  },
+  "suite": "arrow-compute-vector-selection-benchmark",
+  "quantities": ["wall-time"],
+  "provenance": {
+    "run_key": "urn:uuid:9b2e4f1a-6c3d-4e8f-a7b0-1c2d3e4f5a6b"
+  }
+}

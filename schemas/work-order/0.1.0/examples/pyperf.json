@@ -1,0 +1,63 @@
+{
+  "workorder_version": 1,
+  "project": "scipy",
+  "source": {
+    "uri": "https://github.com/scipy/scipy",
+    "type": "git"
+  },
+  "benchmark": {
+    "kind": "repository",
+    "source": {
+      "uri": "https://github.com/python/pyperformance",
+      "type": "git"
+    },
+    "checkout": "/tmp/pyperformance"
+  },
+  "harness": {
+    "name": "pyperf"
+  },
+  "target": {
+    "kind": "python_env",
+    "python": "/tmp/scipy-bench/.venv/bin/python",
+    "source_dir": "/tmp/scipy"
+  },
+  "suite": "pyperformance/data-files/benchmarks/bm_nbody/run_benchmark.py",
+  "quantities": [
+    "wall-time"
+  ],
+  "environment_variables": {
+    "OMP_NUM_THREADS": "1"
+  },
+  "protocol": {
+    "repetitions": {
+      "mode": "fixed",
+      "levels": [
+        {
+          "unit": "process",
+          "n": 20
+        },
+        {
+          "unit": "value",
+          "n": 3
+        }
+      ]
+    },
+    "calibration": {
+      "mode": "adaptive",
+      "minimum_sample_seconds": 0.1
+    },
+    "warmup": {
+      "mode": "fixed",
+      "n_warmup": 1
+    }
+  },
+  "timeout_seconds": 1800,
+  "provenance": {
+    "run_key": "local-2026-09-23-a",
+    "requested_by": "ev-br",
+    "reason": "baseline before the optimize change",
+    "labels": {
+      "side": "baseline"
+    }
+  }
+}
