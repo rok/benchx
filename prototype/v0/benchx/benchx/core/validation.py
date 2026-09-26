@@ -1,14 +1,17 @@
-import json
-from functools import cache
-from importlib import resources
-from typing import Any
+from collections.abc import Iterator
+from typing import Any, Literal, assert_never
 
-from jsonschema import Draft202012Validator, FormatChecker, exceptions
+from jsonschema import Draft202012Validator
 
+from . import catalog
 from .errors import SchemaNotFound, StructureError
 
+Kind = Literal["measurement-result", "work-order", "comparison-document"]
 
-def find_schema(data: dict[str, Any], kind: str) -> Draft202012Validator:
+
+def find_schema(
+    data: dict[str, Any], kind: Kind
+) -> tuple[Draft202012Validator | None, list[SchemaNotFound]]:
     if kind == "measurement-result":
         field = "schema_version"
     elif kind == "work-order":
@@ -16,46 +19,32 @@ def find_schema(data: dict[str, Any], kind: str) -> Draft202012Validator:
     elif kind == "comparison-document":
         field = "comparison_version"
     else:
-        raise ValueError(
-            f"unknown kind {kind!r}; expected one of"
-            "measurement-result, work-order, comparison-document"
-        )
+        assert_never(kind)
 
     if field not in data:
-        raise SchemaNotFound(reason=f"no {field} field; expected a {kind}")
+        reason = f"no {field} field; expected a {kind}"
+        return None, [SchemaNotFound(reason=reason)]
     version = data[field]
 
-    # bool is a subclass of int in Python, so `true` would otherwise pass.
+    # bool is a subclass of int.
     if not isinstance(version, int) or isinstance(version, bool):
-        raise SchemaNotFound(path=(field,), reason="version must be an integer")
+        reason = "version must be an integer"
+        return None, [SchemaNotFound(path=(field,), reason=reason)]
 
-    validator = _load(kind, version)
+    validator = catalog.lookup(kind, version)
     if validator is None:
         reason = f"no schema for {kind} version {version}"
-        raise SchemaNotFound(path=(field,), reason=reason)
+        return None, [SchemaNotFound(path=(field,), reason=reason)]
 
-    return validator
+    return validator, []
 
 
-def check(data: dict[str, Any], validator: Draft202012Validator) -> None:
-    """Raise a `StructureError` for the first way `data` does not fit its schema."""
-    try:
-        validator.validate(data)
-    except exceptions.ValidationError as error:
-        raise StructureError(
+def check(
+    data: dict[str, Any], validator: Draft202012Validator
+) -> Iterator[StructureError]:
+    for error in validator.iter_errors(data):
+        yield StructureError(
             path=tuple(error.absolute_path),
             keyword=str(error.validator),
             reason=error.message,
-        ) from None
-
-
-@cache
-def _load(kind: str, version: int) -> Draft202012Validator | None:
-    file = (
-        resources.files(__package__) / "schemas" / kind / str(version) / "schema.json"
-    )
-    if not file.is_file():
-        return None
-
-    contents = json.loads(file.read_text("utf-8"))
-    return Draft202012Validator(contents, format_checker=FormatChecker())
+        )

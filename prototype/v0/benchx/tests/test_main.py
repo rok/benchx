@@ -7,8 +7,6 @@ from benchx import main
 
 @pytest.fixture
 def documents(tmp_path):
-    """Write documents to files and return their paths as strings."""
-
     def _documents(**named):
         paths = []
         for name, content in named.items():
@@ -43,6 +41,20 @@ def test_each_invalid_document_is_reported_to_stderr(documents, adhoc, capsys):
     assert "malformed at /procedure/slot" in errors[0]
     assert "Expecting property name" in errors[1]
     assert errors[-1] == "1/3 valid"
+
+
+def test_every_error_in_a_document_is_reported(documents, adhoc, capsys):
+    adhoc["procedure"]["slot"] = -1
+    adhoc["procedure"]["round"] = -1
+    [file] = documents(bad=adhoc)
+
+    assert main.main(["validate", file]) == main.EXIT_INVALID
+    errors = capsys.readouterr().err.splitlines()
+    assert sorted(line.split(": ")[1] for line in errors[:-1]) == [
+        "malformed at /procedure/round",
+        "malformed at /procedure/slot",
+    ]
+    assert errors[-1] == "0/1 valid"
 
 
 def test_kind_defaults_to_measurement_result_and_can_be_named(documents, adhoc, capsys):

@@ -1,5 +1,3 @@
-"""`inspect` runs the stages in order and returns the first issue any of them finds."""
-
 import json
 
 import pytest
@@ -16,36 +14,47 @@ from benchx.core.errors import (
 )
 
 
-def error(path, kind=DocumentError):
-    """The error `inspect` raises for this file."""
-    with pytest.raises(kind) as raised:
-        inspect(path, "measurement-result")
-    return raised.value
+def errors(path) -> list[DocumentError]:
+    inspection = inspect(path, "measurement-result")
+    assert not inspection.valid and inspection.data is None
+    return inspection.errors
 
 
-def test_valid_document_is_returned(write, adhoc):
-    assert inspect(write(adhoc), "measurement-result") == adhoc
+def types(path) -> list[type]:
+    return [type(error) for error in errors(path)]
 
 
-def test_read_error(write):
-    assert type(error(write('{"schema_version": 5, "x": NaN}'))) is BadNumber
+def test_valid_document_is_kept(write, adhoc):
+    inspection = inspect(write(adhoc), "measurement-result")
+    assert inspection.valid and inspection.errors == []
+    assert inspection.data == adhoc
+
+
+def test_unknown_kind_is_a_programming_error(write, adhoc):
+    with pytest.raises(AssertionError, match="'nonsense'"):
+        inspect(write(adhoc), "nonsense")
+
+
+def test_read_errors(write):
+    assert types(write('{"schema_version": 5, "x": NaN, "y": 1e400}')) == [
+        BadNumber,
+        BadNumber,
+    ]
 
 
 def test_unparseable_file(write):
-    assert type(error(write("{"))) is ReadError
+    assert types(write("{")) == [ReadError]
 
 
 def test_missing_schema(write):
-    assert (
-        type(error(write({"schema_version": 99, "anything": "goes"}))) is SchemaNotFound
-    )
+    assert types(write({"schema_version": 99, "anything": "goes"})) == [SchemaNotFound]
 
 
 def test_structure_checked_before_rules(write, adhoc):
     # Breaks a rule too, and would crash rules that assume structure if they ran.
-    adhoc["coordinates"]["quantity"]["unit"] = "seconds"
+    adhoc["coordinates"]["subject"]["components"][0]["source"] = "https://x.org/y"
     del adhoc["coordinates"]["subject"]
-    issue = error(write(adhoc))
+    [issue] = errors(write(adhoc))
     assert type(issue) is StructureError and issue.path == ("coordinates",)
 
 
@@ -53,13 +62,14 @@ def test_rules_run_when_structure_passes(write, adhoc):
     adhoc["coordinates"]["subject"]["components"][0]["source"] = (
         "https://example.org/other"
     )
-    assert type(error(write(adhoc))) is PrimarySourceMismatch
+    assert types(write(adhoc)) == [PrimarySourceMismatch]
 
 
 def test_error_rendering(write, adhoc):
     adhoc["procedure"]["slot"] = -1
-    assert str(error(write(adhoc))) == (
-        "malformed at /procedure/slot: -1 is less than the minimum of 0"
+    [issue] = errors(write(adhoc))
+    assert (
+        str(issue) == "malformed at /procedure/slot: -1 is less than the minimum of 0"
     )
 
 

@@ -4,16 +4,22 @@ from benchx.core.errors import BadNumber, DuplicateKey, ReadError
 from benchx.core.loader import read
 
 
-def error(path, kind=ReadError):
-    with pytest.raises(kind) as raised:
-        read(path)
-    return raised.value
+def errors(path) -> list[ReadError]:
+    data, found = read(path)
+    assert data is None and found
+    return found
+
+
+def error(path) -> ReadError:
+    [only] = errors(path)
+    return only
 
 
 def test_reads_object(write):
-    assert read(write('{"a": [1, 2.5, "x", null, true]}')) == {
-        "a": [1, 2.5, "x", None, True]
-    }
+    assert read(write('{"a": [1, 2.5, "x", null, true]}')) == (
+        {"a": [1, 2.5, "x", None, True]},
+        [],
+    )
 
 
 def test_missing_file(tmp_path):
@@ -33,7 +39,7 @@ def test_syntax_error_has_line_and_column(write):
 
 
 def test_byte_order_mark_is_rejected(write):
-    assert type(error(write("\ufeff{}"))) is ReadError
+    assert type(error(write("﻿{}"))) is ReadError
 
 
 @pytest.mark.parametrize("text", ["[]", "1", '"x"', "null"])
@@ -45,7 +51,7 @@ def test_top_level_must_be_object(write, text):
 
 
 def test_duplicate_key(write):
-    issue = error(write('{"a": 1, "b": {"c": 1, "c": 2}}'), DuplicateKey)
+    issue = error(write('{"a": 1, "b": {"c": 1, "c": 2}}'))
     assert issue == DuplicateKey(key="c")
     assert str(issue) == "malformed: duplicate key 'c'"
 
@@ -62,23 +68,31 @@ def test_duplicate_key(write):
     ],
 )
 def test_bad_numbers(write, literal, reason):
-    issue = error(write(f'{{"x": [0, {literal}]}}'), BadNumber)
+    issue = error(write(f'{{"x": [0, {literal}]}}'))
     assert type(issue) is BadNumber and issue.literal == literal
     assert reason in issue.message
 
 
 def test_largest_exact_integer_is_fine(write):
-    assert read(write('{"x": 9007199254740991, "y": -9007199254740991}')) == {
-        "x": 2**53 - 1,
-        "y": -(2**53 - 1),
-    }
+    data, _ = read(write('{"x": 9007199254740991, "y": -9007199254740991}'))
+    assert data == {"x": 2**53 - 1, "y": -(2**53 - 1)}
 
 
 def test_integer_beyond_conversion_limit(write):
-    issue = error(write('{"x": ' + "9" * 5000 + "}"), BadNumber)
+    issue = error(write('{"x": ' + "9" * 5000 + "}"))
     assert type(issue) is BadNumber and "too large" in issue.message
 
 
-def test_stops_at_first_problem(write):
-    issue = error(write('{"a": NaN, "a": 1, "b": [Infinity]}'), BadNumber)
-    assert issue == BadNumber(literal="NaN", reason="not a JSON number")
+def test_reports_every_problem(write):
+    # Duplicate keys surface when their object closes, after its values.
+    found = errors(write('{"a": NaN, "a": 1, "b": [Infinity]}'))
+    assert found == [
+        BadNumber(literal="NaN", reason="not a JSON number"),
+        BadNumber(literal="Infinity", reason="not a JSON number"),
+        DuplicateKey(key="a"),
+    ]
+
+
+def test_syntax_error_follows_problems_found_before_it(write):
+    found = errors(write('{"a": NaN, oops'))
+    assert [type(issue) for issue in found] == [BadNumber, ReadError]

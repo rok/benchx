@@ -4,23 +4,17 @@ from importlib import resources
 import pytest
 from jsonschema import Draft202012Validator
 
-from benchx.core import validation
+from benchx.core import catalog, validation
 from benchx.core.errors import Code, SchemaNotFound, StructureError
 
 TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 
-def check(data: dict) -> StructureError | None:
-    """Return the error `data` raises against its schema, or None when it fits."""
-    validator = validation.find_schema(data, "measurement-result")
-    try:
-        validation.check(data, validator)
-    except StructureError as error:
-        return error
-    return None
+def check(data: dict) -> list[StructureError]:
+    validator, errors = validation.find_schema(data, "measurement-result")
+    assert not errors
+    return list(validation.check(data, validator))
 
-
-# --- bundled schemas ---------------------------------------------------------
 
 SCHEMA_FILES = sorted(
     (kind.name, version.name, version / "schema.json")
@@ -40,23 +34,20 @@ def test_result_schema_is_bundled():
     }
 
 
-# --- find_schema -------------------------------------------------------------
+def test_lookup_is_cached():
+    assert catalog.lookup("measurement-result", 5) is catalog.lookup(
+        "measurement-result", 5
+    )
+
+
+def test_lookup_of_missing_schema_is_none():
+    assert catalog.lookup("measurement-result", 4) is None
 
 
 def test_finds_result_schema(adhoc):
-    validator = validation.find_schema(adhoc, "measurement-result")
-    assert isinstance(validator, Draft202012Validator)
+    validator, errors = validation.find_schema(adhoc, "measurement-result")
+    assert errors == []
     assert validator.schema["$id"] == "urn:benchx:schema:measurement-result:0.1.0"
-
-
-def test_schema_is_cached(adhoc):
-    first = validation.find_schema(adhoc, "measurement-result")
-    assert validation.find_schema(adhoc, "measurement-result") is first
-
-
-def test_unknown_kind_is_a_programming_error(adhoc):
-    with pytest.raises(ValueError, match="unknown kind 'nonsense'"):
-        validation.find_schema(adhoc, "nonsense")
 
 
 @pytest.mark.parametrize(
@@ -96,17 +87,14 @@ def test_unknown_kind_is_a_programming_error(adhoc):
     ],
 )
 def test_schema_not_found(data, kind, path, fragment):
-    with pytest.raises(SchemaNotFound) as raised:
-        validation.find_schema(data, kind)
-    assert raised.value.path == path and fragment in raised.value.message
-
-
-# --- check -------------------------------------------------------------------
+    validator, [issue] = validation.find_schema(data, kind)
+    assert validator is None and type(issue) is SchemaNotFound
+    assert issue.path == path and fragment in issue.message
 
 
 @pytest.mark.parametrize("name", ["adhoc", "arrow"])
 def test_schema_doc_examples_fit(request, name):
-    assert check(request.getfixturevalue(name)) is None
+    assert check(request.getfixturevalue(name)) == []
 
 
 def test_censored_skipped_and_workorder_artifact_fit(adhoc):
@@ -132,12 +120,12 @@ def test_censored_skipped_and_workorder_artifact_fit(adhoc):
             "sha256": "a" * 64,
         }
     ]
-    assert check(censored) is check(skipped) is check(linked) is None
+    assert check(censored) == check(skipped) == check(linked) == []
 
 
 def test_unexpected_property_is_malformed(adhoc):
     adhoc["series_fingerprint"] = "abc"
-    issue = check(adhoc)
+    [issue] = check(adhoc)
     assert type(issue) is StructureError and issue.code is Code.MALFORMED
     assert (issue.path, issue.keyword) == ((), "additionalProperties")
     assert (
@@ -223,14 +211,19 @@ def test_unexpected_property_is_malformed(adhoc):
 )
 def test_structure_errors(adhoc, mutate, path, keyword, message):
     mutate(adhoc)
-    issue = check(adhoc)
+    [issue] = check(adhoc)
     assert type(issue) is StructureError
     assert (issue.path, issue.keyword) == (path, keyword)
     if message is not None:
         assert issue.message == message
 
 
-def test_most_relevant_issue_is_deterministic(adhoc):
+def test_reports_every_structure_error(adhoc):
     adhoc["measurement"]["status"] = "done"
     adhoc["procedure"]["round"] = -1
-    assert check(adhoc) == check(json.loads(json.dumps(adhoc)))
+    issues = check(adhoc)
+    assert {(issue.path, issue.keyword) for issue in issues} == {
+        (("measurement", "status"), "enum"),
+        (("procedure", "round"), "minimum"),
+    }
+    assert issues == check(json.loads(json.dumps(adhoc)))

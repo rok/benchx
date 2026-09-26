@@ -1,15 +1,12 @@
-"""Command-line entry point (`bx`).
-
-Commands call into the library and turn its exceptions into output; no
-validation logic lives here.
-"""
+"""Command-line entry point (`bx`)."""
 
 import argparse
 import sys
 from pathlib import Path
+from typing import get_args
 
 from .core import inspect
-from .core.errors import DocumentError
+from .core.validation import Kind
 
 EXIT_OK = 0
 EXIT_INVALID = 1
@@ -28,13 +25,13 @@ def _add_validate(subcommands: argparse._SubParsersAction) -> None:
     parser = subcommands.add_parser(
         "validate",
         help="check documents against their schema and rules",
-        description="Report the first problem in each document, "
+        description="Report every problem in each document, "
         "or nothing when all are valid.",
     )
     parser.add_argument("files", type=Path, nargs="+")
     parser.add_argument(
         "--kind",
-        choices=["measurement-result", "work-order", "comparison-document"],
+        choices=get_args(Kind),
         default="measurement-result",
         help="kind of document being checked (default: %(default)s)",
     )
@@ -42,18 +39,17 @@ def _add_validate(subcommands: argparse._SubParsersAction) -> None:
 
 
 def run_validate(arguments: argparse.Namespace) -> int:
-    invalid = 0
+    valid = 0
 
     for path in arguments.files:
-        try:
-            inspect(path, arguments.kind)
-        except DocumentError as error:
+        inspection = inspect(path, arguments.kind)
+        for error in inspection.errors:
             print(f"{path}: {error}", file=sys.stderr)
-            invalid += 1
+        valid += inspection.valid
 
     checked = len(arguments.files)
-    print(f"{checked - invalid}/{checked} valid", file=sys.stderr)
-    return EXIT_INVALID if invalid else EXIT_OK
+    print(f"{valid}/{checked} valid", file=sys.stderr)
+    return EXIT_OK if valid == checked else EXIT_INVALID
 
 
 if __name__ == "__main__":

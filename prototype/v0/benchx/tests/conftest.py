@@ -25,8 +25,6 @@ def arrow() -> dict[str, Any]:
 
 @pytest.fixture
 def write(tmp_path: Path) -> Callable[[str | bytes | dict], Path]:
-    """Write JSON text, bytes, or a dict to a file and return its path."""
-
     def _write(content: str | bytes | dict) -> Path:
         path = tmp_path / "doc.json"
         if isinstance(content, dict):
