@@ -1,1 +1,1 @@
-"""benchx: minimal benchmark result tooling for the scientific Python ecosystem."""
+"""benchx: minimal benchmark framework."""

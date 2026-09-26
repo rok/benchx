@@ -1,25 +1,4 @@
-"""Everything that can be wrong with a document, as exceptions.
-
-    DocumentError
-    ├── ReadError          loader.read: the file is not usable JSON
-    │   ├── DuplicateKey
-    │   └── BadNumber
-    ├── SchemaNotFound     validation.find_schema: no schema applies
-    ├── StructureError     validation.check: the document does not fit its schema
-    └── RuleViolation      rules.check: a rule the schema cannot express is broken
-        └── PrimarySourceMismatch
-
-Each stage raises at the first problem, so a document is either returned whole
-or rejected with one reason. Every error carries a rejection `code` from the
-schema doc's taxonomy (§5.4). Structure and rule errors carry a `path` into the
-document (a tuple of keys and indexes, empty for the root); read errors describe
-the file instead.
-
-They are dataclasses as well as exceptions, so a caller can compare them and
-read their fields rather than parse their messages. They are not frozen: an
-exception is mutated as it propagates, since Python and pytest assign its
-__traceback__, which a frozen dataclass refuses.
-"""
+"""Problems found in documents. Match on class; `code` is what leaves benchx."""
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -31,19 +10,17 @@ PathParts = tuple[str | int, ...]
 
 
 class Code(StrEnum):
-    """Rejection codes. Members are their string values."""
-
     MALFORMED = "malformed"
     IDENTITY_VIOLATION = "identity-violation"
-    # Store-dependent; raised by ingest, never by the validation stages.
+    # Store-dependent; reported by ingest.
     IDEMPOTENCY_CONFLICT = "idempotency-conflict"
     UNIT_CONFLICT = "unit-conflict"
     ATTEMPT_CONFLICT = "attempt-conflict"
     QUARANTINED = "quarantined"
 
 
-@dataclass(kw_only=True)
-class DocumentError(Exception):
+@dataclass(frozen=True, kw_only=True)
+class DocumentError:
     code: ClassVar[Code] = Code.MALFORMED
     path: PathParts = ()
 
@@ -53,9 +30,7 @@ class DocumentError(Exception):
 
     @property
     def location(self) -> str | None:
-        """Where the error is, for display; None when it concerns the whole file."""
-        pointer = JsonPointer.from_parts(self.path).path
-        return pointer or "/"
+        return JsonPointer.from_parts(self.path).path or "/"
 
     def __str__(self) -> str:
         if self.location is None:
@@ -63,17 +38,8 @@ class DocumentError(Exception):
         return f"{self.code} at {self.location}: {self.message}"
 
 
-# --- loader.read -------------------------------------------------------------
-
-
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class ReadError(DocumentError):
-    """The file cannot be read, decoded, or parsed as a JSON object.
-
-    Read errors describe the file, not a place in a parsed document, so they
-    have no path; syntax errors carry a line and column.
-    """
-
     reason: str
     line: int | None = None
     column: int | None = None
@@ -89,10 +55,8 @@ class ReadError(DocumentError):
         return f"line {self.line}, column {self.column}"
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class DuplicateKey(ReadError):
-    """An object repeats a key; JSON parsers silently keep only one value."""
-
     key: str
     reason: str = "duplicate key"
 
@@ -101,10 +65,8 @@ class DuplicateKey(ReadError):
         return f"duplicate key {self.key!r}"
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class BadNumber(ReadError):
-    """A number that is not JSON (NaN, Infinity) or not exactly representable."""
-
     literal: str
 
     @property
@@ -112,10 +74,7 @@ class BadNumber(ReadError):
         return f"{self.literal}: {self.reason}"
 
 
-# --- validation.find_schema --------------------------------------------------
-
-
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class SchemaNotFound(DocumentError):
     reason: str
 
@@ -124,13 +83,9 @@ class SchemaNotFound(DocumentError):
         return self.reason
 
 
-# --- validation.check --------------------------------------------------------
-
-
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class StructureError(DocumentError):
     keyword: str
-    """The JSON Schema keyword that failed, such as required or enum."""
     reason: str
 
     @property
@@ -138,25 +93,15 @@ class StructureError(DocumentError):
         return self.reason
 
 
-# --- rules.check -------------------------------------------------------------
-
-
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class RuleViolation(DocumentError):
-    rule: str
-    """Stable rule name, such as duplicate-estimate."""
-    reason: str
-
-    @property
-    def message(self) -> str:
-        return self.reason
+    rule: ClassVar[str]
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class PrimarySourceMismatch(RuleViolation):
     code: ClassVar[Code] = Code.IDENTITY_VIOLATION
-    rule: str = "primary-source"
-    reason: str = "primary component source differs from the top-level source"
+    rule: ClassVar[str] = "primary-source"
     reported: str
     expected: str
 
@@ -165,4 +110,47 @@ class PrimarySourceMismatch(RuleViolation):
         return (
             f"primary component source {self.reported!r} "
             f"differs from source {self.expected!r}"
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class DuplicateEstimate(RuleViolation):
+    rule: ClassVar[str] = "duplicate-estimate"
+    estimator: str
+
+    @property
+    def message(self) -> str:
+        return f"duplicate estimate for estimator {self.estimator!r}"
+
+
+@dataclass(frozen=True, kw_only=True)
+class EmptyInterval(RuleViolation):
+    rule: ClassVar[str] = "empty-interval"
+    lower: float
+    upper: float
+
+    @property
+    def message(self) -> str:
+        return f"empty interval from {self.lower} to {self.upper}"
+
+
+@dataclass(frozen=True, kw_only=True)
+class EndedBeforeStarted(RuleViolation):
+    rule: ClassVar[str] = "ended-before-started"
+
+    @property
+    def message(self) -> str:
+        return "ended_at is before started_at"
+
+
+@dataclass(frozen=True, kw_only=True)
+class CompletedExceedsAttempted(RuleViolation):
+    rule: ClassVar[str] = "repetition-counts"
+    completed: int
+    attempted: int
+
+    @property
+    def message(self) -> str:
+        return (
+            f"{self.completed} completed repetitions exceed {self.attempted} attempted"
         )
