@@ -29,9 +29,10 @@ def test_schema_doc_examples_break_no_rules(request, name):
     assert check(request.getfixturevalue(name)) == []
 
 
-def test_kinds_without_rules():
-    assert list(rules.check({}, "work-order")) == []
-    assert list(rules.check({}, "comparison-document")) == []
+@pytest.mark.parametrize("kind", ["work-order", "comparison-document"])
+def test_rules_not_implemented(kind):
+    with pytest.raises(NotImplementedError, match=kind):
+        list(rules.check({}, kind))
 
 
 def test_primary_source_mismatch(adhoc):
