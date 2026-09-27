@@ -20,7 +20,7 @@ from .validation import Kind
 def check(data: dict[str, Any], kind: Kind) -> Iterator[RuleViolation]:
     if kind == "measurement-result":
         yield from check_result(data)
-    elif kind in ("work-order", "comparison-document"):
+    elif kind == "work-order" or kind == "comparison-document":
         raise NotImplementedError(f"no rules for {kind} yet")
     else:
         assert_never(kind)

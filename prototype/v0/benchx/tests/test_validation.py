@@ -29,7 +29,7 @@ def test_bundled_schemas_are_valid_json_schema(kind, version, file):
 
 
 def test_result_schema_is_bundled():
-    assert ("measurement-result", "5") in {
+    assert ("measurement-result", "0.1.0") in {
         (kind, version) for kind, version, _ in SCHEMA_FILES
     }
 
