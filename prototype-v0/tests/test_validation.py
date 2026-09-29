@@ -1,5 +1,4 @@
 import json
-from importlib import resources
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -18,17 +17,17 @@ def check(data: dict) -> list[StructureError]:
 
 SCHEMA_FILES = sorted(
     (kind.name, version.name, version / "schema.json")
-    for kind in (resources.files("benchx.core") / "schemas").iterdir()
+    for kind in catalog.SCHEMAS.iterdir()
     for version in kind.iterdir()
 )
 
 
 @pytest.mark.parametrize("kind, version, file", SCHEMA_FILES, ids=lambda v: str(v)[:40])
-def test_bundled_schemas_are_valid_json_schema(kind, version, file):
+def test_schemas_are_valid_json_schema(kind, version, file):
     Draft202012Validator.check_schema(json.loads(file.read_text("utf-8")))
 
 
-def test_result_schema_is_bundled():
+def test_result_schema_is_present():
     assert ("measurement-result", "0.1.0") in {
         (kind, version) for kind, version, _ in SCHEMA_FILES
     }
@@ -92,9 +91,8 @@ def test_schema_not_found(data, kind, path, fragment):
     assert issue.path == path and fragment in issue.message
 
 
-@pytest.mark.parametrize("name", ["adhoc", "arrow"])
-def test_schema_doc_examples_fit(request, name):
-    assert check(request.getfixturevalue(name)) == []
+def test_examples_fit(example):
+    assert check(example) == []
 
 
 def test_censored_skipped_and_workorder_artifact_fit(adhoc):

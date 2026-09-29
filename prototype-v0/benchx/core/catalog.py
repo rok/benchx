@@ -1,10 +1,12 @@
-"""The schemas shipped with benchx."""
+"""The schemas in the repository's schemas/ directory."""
 
 import json
 from functools import cache
-from importlib import resources
+from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
+
+SCHEMAS = Path(__file__).resolve().parents[3] / "schemas"
 
 # The release shipped for each major version a document can declare.
 RELEASES = {
@@ -18,6 +20,5 @@ def lookup(kind: str, version: int) -> Draft202012Validator | None:
     if release is None:
         return None
 
-    file = resources.files(__package__) / "schemas" / kind / release / "schema.json"
-    schema = json.loads(file.read_text("utf-8"))
+    schema = json.loads((SCHEMAS / kind / release / "schema.json").read_text("utf-8"))
     return Draft202012Validator(schema, format_checker=FormatChecker())

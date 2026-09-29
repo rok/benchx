@@ -24,9 +24,8 @@ def where(issues: list[RuleViolation]) -> list[tuple]:
     return [(type(issue), issue.path) for issue in issues]
 
 
-@pytest.mark.parametrize("name", ["adhoc", "arrow"])
-def test_schema_doc_examples_break_no_rules(request, name):
-    assert check(request.getfixturevalue(name)) == []
+def test_examples_break_no_rules(example):
+    assert check(example) == []
 
 
 @pytest.mark.parametrize("kind", ["work-order", "comparison-document"])

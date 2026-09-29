@@ -1,4 +1,3 @@
-import copy
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -6,21 +5,28 @@ from typing import Any
 
 import pytest
 
-FIXTURES = Path(__file__).parent / "fixtures"
+from benchx.core.catalog import SCHEMAS
+
+EXAMPLES = SCHEMAS / "measurement-result" / "0.1.0" / "examples"
 
 
-def fixture(kind: str, name: str) -> dict[str, Any]:
-    return json.loads((FIXTURES / kind / f"{name}.json").read_text())
+def load(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text())
+
+
+@pytest.fixture(params=sorted(EXAMPLES.glob("*.json")), ids=lambda path: path.stem)
+def example(request: pytest.FixtureRequest) -> dict[str, Any]:
+    return load(request.param)
 
 
 @pytest.fixture
 def adhoc() -> dict[str, Any]:
-    return copy.deepcopy(fixture("result", "adhoc"))
+    return load(EXAMPLES / "adhoc.json")
 
 
 @pytest.fixture
 def arrow() -> dict[str, Any]:
-    return copy.deepcopy(fixture("result", "arrow"))
+    return load(EXAMPLES / "arrow.json")
 
 
 @pytest.fixture
