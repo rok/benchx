@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:benchx:schema:work-order:0.1.0",
+  "title": "BenchX work order",
+  "description": "The runner's single input: what to run, at what, how, and for whom (docs/design/runner-schema.md §3). A work order is plain JSON, written by hand, a scheduler, a CI job, or the workbench. The runner reads nothing else.",
+  "$comment": "Shared primitives ($defs/token, $defs/nonEmptyString, $defs/uri, $defs/sha256, $defs/sourceRef) are $refs into urn:benchx:schema:measurement-result:0.1.0#/$defs; a validator must register both schemas together (e.g. a referencing.Registry in Python, addSchema in ajv). The `benchmark` field is not in the original runner-schema.md draft: it closes a gap found while planning this schema (see runner-schema.md §3.3) — every non-thin result requires benchmark.source/revision, and nothing in §3's original field table supplied them. `plan` is required exactly when state is resolved (see the allOf below); this schema cannot express the rest of §3.2's resolution rules (a resolved order never differs from what its draft would resolve to; the runner refuses a draft with an unpinned branch name or a versionless policy).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "work_order_id",
+    "state",
+    "suites",
+    "quantities",
+    "target",
+    "precision",
+    "timeouts",
+    "environment_policy",
+    "run_key",
+    "requester"
+  ],
+  "properties": {
+    "schema_version": { "const": "benchx/work-order/0.1.0" },
+    "work_order_id": {
+      "description": "Stable name for this order: a URI or UUID.",
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "state": {
+      "description": "Only a resolved order executes (§3.2).",
+      "enum": ["draft", "resolved"]
+    },
+    "project": {
+      "description": "Project in the store. Omit for an ad hoc run; results are then thin (result schema §4.1).",
+      "$ref": "#/$defs/token"
+    },
+    "suites": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/suite" }
+    },
+    "quantities": {
+      "description": "Quantities to collect, e.g. wall-time, peak-rss.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/token" }
+    },
+    "target": {
+      "description": "What code to measure (§3.1).",
+      "oneOf": [
+        { "$ref": "#/$defs/targetRevision" },
+        { "$ref": "#/$defs/targetWorkingTree" },
+        { "$ref": "#/$defs/targetBuild" },
+        { "$ref": "#/$defs/targetArtifact" }
+      ]
+    },
+    "benchmark": {
+      "description": "Where the benchmark suite's own code lives, when different from target (§3.3 addendum). Absent means the benchmarks live in the same checkout as target.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "revision"],
+      "properties": {
+        "source": { "$ref": "#/$defs/sourceRef" },
+        "revision": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "components": {
+      "description": "Pinned non-primary components.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "source", "revision"],
+        "properties": {
+          "name": { "$ref": "#/$defs/token" },
+          "role": { "$ref": "#/$defs/token" },
+          "source": { "$ref": "#/$defs/sourceRef" },
+          "revision": { "$ref": "#/$defs/nonEmptyString" }
+        }
+      }
+    },
+    "build": {
+      "description": "How to build target.kind revision.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "profile": { "$ref": "#/$defs/nonEmptyString" },
+        "type": { "$ref": "#/$defs/nonEmptyString" },
+        "compiler": { "$ref": "#/$defs/nonEmptyString" },
+        "flags": { "type": "array", "items": { "type": "string" } },
+        "options": { "type": "object" },
+        "cache": { "enum": ["reuse", "fresh", "require-cached"] }
+      }
+    },
+    "precision": {
+      "description": "Harness-neutral precision settings (repetitions, min_time_s, warmups, inner_iterations), from Appendix B keys of the result schema.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repetitions"],
+      "properties": {
+        "repetitions": { "type": "integer", "minimum": 1 },
+        "min_time_s": { "type": "number", "exclusiveMinimum": 0 },
+        "warmups": { "type": "integer", "minimum": 0 },
+        "inner_iterations": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "schedule": {
+      "description": "Interleaving across sides of a comparison.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["sequential", "alternating", "random"] },
+        "seed": { "type": "integer" }
+      }
+    },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_s", "order_s"],
+      "properties": {
+        "case_s": { "type": "number", "exclusiveMinimum": 0 },
+        "order_s": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "environment_policy": {
+      "description": "Named policy (schemas/environment-policy/0.1.0).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "$ref": "#/$defs/token" },
+        "version": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "run_key": {
+      "description": "Groups this order with sibling orders in one comparison.",
+      "$ref": "#/$defs/token"
+    },
+    "round": {
+      "description": "Position in an interleaved run; set by the run author.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "labels": {
+      "description": "Caller labels, e.g. {\"env\": \"numpy-2.0\"}.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/nonEmptyString" }
+    },
+    "requester": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "enum": ["scheduler", "ci", "workbench", "person"] },
+        "name": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "reason": {
+      "description": "Free text: why this run exists.",
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "plan": {
+      "description": "Every case x quantity the run will attempt. Required exactly when state is resolved (§3.2, §6).",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "case", "quantity"],
+        "properties": {
+          "id": { "$ref": "#/$defs/token" },
+          "case": { "$ref": "#/$defs/nonEmptyString" },
+          "quantity": { "$ref": "#/$defs/token" }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "resolved" } }, "required": ["state"] },
+      "then": { "required": ["plan"] }
+    },
+    {
+      "if": { "properties": { "state": { "const": "draft" } }, "required": ["state"] },
+      "then": { "not": { "required": ["plan"] } }
+    }
+  ],
+  "$defs": {
+    "token": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/token" },
+    "nonEmptyString": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/nonEmptyString" },
+    "uri": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/uri" },
+    "sha256": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/sha256" },
+    "sourceRef": { "$ref": "urn:benchx:schema:measurement-result:0.1.0#/$defs/sourceRef" },
+    "suite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "suite"],
+      "properties": {
+        "adapter": { "$ref": "#/$defs/token" },
+        "suite": { "$ref": "#/$defs/nonEmptyString" },
+        "include": { "type": "array", "items": { "type": "string" } },
+        "exclude": { "type": "array", "items": { "type": "string" } },
+        "parameters": { "type": "object" }
+      }
+    },
+    "targetRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "revision"],
+      "properties": {
+        "kind": { "const": "revision" },
+        "source": { "$ref": "#/$defs/sourceRef" },
+        "revision": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "targetWorkingTree": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "source"],
+      "properties": {
+        "kind": { "const": "working_tree" },
+        "path": { "$ref": "#/$defs/nonEmptyString" },
+        "source": { "$ref": "#/$defs/sourceRef" }
+      }
+    },
+    "targetBuild": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "source"],
+      "properties": {
+        "kind": { "const": "build" },
+        "path": { "$ref": "#/$defs/nonEmptyString" },
+        "source": { "$ref": "#/$defs/sourceRef" }
+      }
+    },
+    "targetArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "uri", "sha256", "source", "revision"],
+      "properties": {
+        "kind": { "const": "artifact" },
+        "uri": { "$ref": "#/$defs/uri" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "source": { "$ref": "#/$defs/sourceRef" },
+        "revision": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    }
+  }
+}
