@@ -7,7 +7,7 @@ import pytest
 
 from benchx import compare, core, identity, runner
 from benchx.store import Store
-from conftest import NOISY, QUIET, cases, make_build, order, run_rounds
+from conftest import NOISY, QUIET, SOURCE_URI, cases, make_build, order, run_rounds
 
 
 def results(directory: Path) -> list[dict]:
@@ -124,7 +124,7 @@ def test_traceability(revisions_run, tmp):
     store.ingest_paths([revisions_run])
     docs = store.documents("rev-1")
     for doc in docs:
-        assert store.order(doc["provenance"]["info"]["workorder_ref"])["provenance"]["run_key"] == "rev-1"
+        assert store.order(doc["provenance"]["info"]["workorder_ref"])["run_key"] == "rev-1"
     comparison = compare.compare(docs, run_key="rev-1", profile="revisions", baseline=docs[0]["revision"]["key"])
     assert {(i["producer"], i["ingest_key"]) for i in comparison["inputs"]} == \
         {(d["producer"]["name"], d["ingest_key"]) for d in docs}
@@ -197,9 +197,10 @@ def test_failures_are_results(repo, tmp):
 
 
 @pytest.mark.parametrize("change, message", [
-    (lambda o: o["protocol"].update(gc="disabled"), "protocol keys"),
-    (lambda o: o.update(target={"kind": "python_env", "python": "/usr/bin/python3"}), "build_dir"),
-    (lambda o: o.update(suite="missing-binary"), "not found"),
+    (lambda o: o["precision"].update(warmup={"mode": "count", "n_warmup": 2}), "warmup"),
+    (lambda o: o.update(target={"kind": "revision", "source": {"uri": SOURCE_URI, "type": "git"},
+                                "revision": "deadbeef"}), "build targets"),
+    (lambda o: o["suites"][0].update(suite="missing-binary"), "not found"),
     (lambda o: o.update(quantities=["peak-rss"]), "quantities"),
     (lambda o: o.update(surprise=1), "work order invalid"),
 ])
@@ -238,7 +239,7 @@ def test_planned_case_never_reported(repo, tmp):
 
 
 def test_defaults_are_recorded(repo, tmp):
-    """R3: settings the order leaves out are recorded as applied (#35 W4a)."""
+    """R3: settings the order leaves out are recorded as applied."""
     doc = run_one(repo, tmp)[0]
     protocol = doc["coordinates"]["comparison_context"]["protocol"]
     assert protocol["calibration"] == {"mode": "adaptive", "minimum_sample_seconds": 0.5}
@@ -341,6 +342,6 @@ def test_bx_run_delivers_to_the_local_store(repo, tmp, capsys):
     assert cli.main(["run", str(tmp / "o2.json"), "--out", str(tmp / "out"), "--no-ingest"]) == 0
     assert len(results(tmp / "out")) == 4  # both runs' files are written
     total, rows = Store().head()
-    assert total == 2 and {core.load(tmp / "o1.json")["provenance"]["run_key"]} == {r["run_key"] for r in rows}
+    assert total == 2 and {core.load(tmp / "o1.json")["run_key"]} == {r["run_key"] for r in rows}
     ref = core.loads(rows[0]["document"])["provenance"]["info"]["workorder_ref"]
     assert Store().order(ref) == core.load(tmp / "o1.json")  # the order travelled with its results

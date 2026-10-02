@@ -1,6 +1,6 @@
 # Runner Schemas: Work Order, Environment Policy, Run Context
 
-**Status:** Draft for review
+**Status:** Draft for review. **Authoritative** over `benchmark-environments.md` §2.2 principle 2, §2.3, and the runner-related items in §8's "Consequences for other design documents", and over the unmerged work-order proposal in `work-order.md`, where they conflict: this document's environment-policy model (enforce/verify/refuse, §4) and buildable target kinds (§3.1) stand as designed. The contradiction is not otherwise reconciled in either document as of this writing; see `benchmark-environments.md` §8 for the disputed text.
 
 **Companion to:** `runner.md` (PR #24), `benchmark-result-schema.md`
 
@@ -31,16 +31,19 @@ A work order (`benchx/work-order/0.1.0`) has four required groups matching `runn
 | `schema_version` | const | yes | — | `benchx/work-order/0.1.0` | — |
 | `work_order_id` | URI or UUID | yes | — | Stable name for this order | `provenance.artifacts` (kind `work-order`, with sha256) |
 | `state` | `draft` \| `resolved` | yes | — | Only `resolved` orders execute (§3.2) | — |
-| `project` | token | yes | what | Project in the store | `project` |
-| `suites[]` | array | yes | what | `{adapter, suite, include[], exclude[], parameters}` per harness suite | `coordinates.workload` via the adapter |
+| `project` | token | no | what | Project in the store; omit for an ad hoc run (results are then thin) | `project` |
+| `suites[]` | array | yes | what | `{adapter, suite, filter, include[], exclude[], parameters}` per harness suite; `filter` is a harness-native string, an alternative to `include`/`exclude` for adapters with only single-pattern selection | `coordinates.workload` via the adapter |
 | `quantities[]` | array of names | yes | what | Quantities to collect, e.g. `wall-time`, `peak-rss` | `coordinates.quantity` |
+| `environment_variables` | string map | no | what | `{NAME: value}` set on the measured process, on top of what the runner inherited; a workload coordinate, not a machine fact — `OMP_NUM_THREADS=1` and `=10` are different, non-pooling variants | `coordinates.workload.parameters` |
+| `workload_parameters` | map | no | what | Parameters passed to the runner or harness, never as environment variables; a name may not appear in both maps | `coordinates.workload.parameters` |
 | `target` | one of 4 kinds | yes | at what | What code to measure (§3.1) | `source`, `revision`, dirty flags, tree ids |
+| `benchmark` | object | no | at what | `{source, revision}` naming where the benchmark suite's own code lives, when different from `target` (§3.3, added here to close a gap) | top-level `benchmark.source`, `benchmark.revision` |
 | `components[]` | array | no | at what | Pinned non-primary components `{name, role, source, revision}` | `coordinates.subject.components` |
 | `build` | object | no | how | `{profile, type, compiler, flags[], options{}, cache}` | `coordinates.subject.configuration` |
-| `precision` | object | yes | how | `{repetitions, min_time_s, warmups, inner_iterations}` (harness-neutral names, from Appendix B keys) | intended: `comparison_context`; realized: `procedure` |
+| `precision` | object | yes | how | `{repetitions, calibration, warmup}`, spelled per Appendix B (`repetitions` a bare int or `{mode: fixed, levels[]}`; `calibration.mode`: `adaptive` + `minimum_sample_seconds`, or `fixed` + `n_iterations`; `warmup.mode`: `none`, `count` + `n_warmup`, or `time` + `seconds`) | intended: `comparison_context`; realized: `procedure` |
 | `schedule` | object | no | how | `{kind: sequential \| alternating \| random, seed}` across sides | `comparison_context.protocol.schedule`; realized `procedure.slot` |
 | `timeouts` | object | yes | how | `{case_s, order_s}`, both positive | exceeded: `censored` or `error` result |
-| `environment_policy` | `{name, version}` | yes | how | Named policy (§4) | policy identity in `coordinates.environment.identity` |
+| `environment_policy` | `{name, version}` | no | how | Named policy (§4); absent means the runner applies none and only records observed context, the default `benchmark-environments.md`'s laptop scenario describes | policy identity in `coordinates.environment.identity` |
 | `run_key` | token | yes | for whom | Groups this order with sibling orders in one comparison | `provenance.run_key` |
 | `round` | integer | no | for whom | Position in an interleaved run; set by the run author | `procedure.round` |
 | `labels` | string map | no | for whom | Caller labels, e.g. `{"env": "numpy-2.0"}` | `provenance.labels` |
@@ -53,9 +56,11 @@ A work order (`benchx/work-order/0.1.0`) has four required groups matching `runn
 | `target.kind` | Required fields | What the runner must verify |
 |---|---|---|
 | `revision` | `source.uri`, `revision` (full commit id) | Checkout matches `revision`; tree is clean after checkout |
-| `working_tree` | `path`, `source.uri` | Records HEAD, dirty state, and tree id as found; never cleans the tree |
-| `build` | `path`, `source.uri` | Build config and staleness vs. the tree it came from (`runner.md` open question 3) |
+| `working_tree` | `path`, `source.uri`; optional `source_dir` | Records HEAD, dirty state, and tree id as found at `source_dir` (default `path`); never cleans the tree |
+| `build` | `path`, `source.uri`; optional `source_dir` | Build config and staleness vs. the tree at `source_dir`, when it differs from what the build itself records (`runner.md` open question 3) |
 | `artifact` | `uri`, `sha256`, `source.uri`, `revision` | Checksum matches; `revision` is the artifact's declared source, taken on trust and flagged in `quality.warnings` |
+
+`source.uri` names the canonical repository; `source_dir`, when given, is the local checkout path the runner inspects for revision/dirty/tree facts. Absent, the runner falls back to whatever the target itself records (e.g. a build directory's own `CMAKE_HOME_DIRECTORY`).
 
 ### 3.2 Draft and resolved orders
 
@@ -65,12 +70,16 @@ Resolution happens as early as possible, and the runner fills in only what is le
 
 - **Resolution only fills gaps.** It never changes a field that is already fixed, so a fully resolved order passes through the runner unchanged.
 - **The requester resolves shared facts.** The scheduler, CI job, or workbench fixes everything that must be identical across sibling orders in a `run_key`: commit ids for branch names, policy versions, precision defaults, and the case list when it is knowable without a build. Resolving these once is what keeps both sides of a comparison on the same values.
-- **The runner resolves only facts about its own machine.** These are working-tree state (HEAD, dirty flag, tree id), the case list for harnesses that enumerate cases only after a build, and the values actually enforced by the policy. It then records the resolved order as a provenance artifact before execution starts.
+- **The runner resolves only facts about its own machine.** These are working-tree state (HEAD, dirty flag, tree id), the case list for harnesses that enumerate cases only after a build, and the values actually enforced by the policy. It then records the resolved order as a provenance artifact before execution starts. A `plan` entry the runner filled in this way carries `from`, the suite's `filter` or `include` pattern it was expanded from, so a runner-resolved entry stays traceable to what generated it, distinct from one a scheduler hand-authored.
 - **The runner refuses unresolved shared fields.** A draft that still names a branch, or a policy without a version, is refused rather than resolved against the runner's local clone or cache. That would infer the run from leftovers on the machine, which `runner.md` principle 1 forbids.
 
 So a person on a laptop can hand the runner a loose draft whose target is `working_tree`, which is only meaningful on that machine anyway, while a fleet order arrives already pinned.
 
 Where results are delivered (store URL, local file) is an invocation argument, not an order field. Replaying an order on another machine shouldn't silently post to the original store.
+
+### 3.3 Benchmark suite location (addendum)
+
+§3's field table and §3.1 name only the subject's target. Nothing in the original draft says where the *benchmark* suite's own code lives, yet every non-thin result requires `benchmark.source` and `benchmark.revision` (`benchmark-result-schema.md` §4.1, §5.2) alongside `provenance.benchmark_dirty`/`benchmark_tree`. This is a gap in the original design, closed here: an optional `benchmark` object, `{source, revision}`, mirroring `sourceRef` and a bare revision key the way `target.kind: revision` does. When present, the runner checks out and records that revision the same way it records `target`'s. When absent, the benchmarks are assumed to live in the same checkout as `target`, and the runner reuses `target`'s resolved source, revision, dirty flag, and tree for `benchmark.*` and `provenance.benchmark_dirty`/`benchmark_tree` — the common case where a project's benchmarks live alongside its own code. A benchmark suite with no version control at all (an installed, unversioned directory) is not covered by this addendum and remains open.
 
 ## 4. Environment policy
 
@@ -96,7 +105,7 @@ The core set is small and CPU/GPU generic. Project-specific checks use a namespa
 | `cpu.boost` | on/off | record | enforce off |
 | `cpu.smt` | on/off | record | verify |
 | `gpu.device` | index or UUID | enforce | enforce |
-| `gpu.clocks_locked` | MHz | — | enforce |
+| `gpu.clocks-locked` | MHz | — | enforce |
 | `accel.sync` | `events` \| `device-sync` | enforce | enforce |
 | `load.quiescent` | max 1-min load, window s | record | verify, refuse |
 | `hardware.present` | CPU model pattern, GPU count, min RAM | verify, warn | verify, refuse |
@@ -108,7 +117,7 @@ A laptop policy mostly records; a tuned-node policy mostly enforces. Both produc
 
 ### 4.2 Refusal is still a result
 
-`runner.md` §6 says an unsatisfiable policy refuses the run "with the reason reported". Principle 5 of the same document says every outcome is a result. This schema reconciles the two: a refusal emits one `error` result per `plan` entry with `measurement.reason = "policy_unsatisfied:<check>"`. Nothing is measured, but nothing goes missing either.
+`runner.md` §6 says an unsatisfiable policy refuses the run "with the reason reported". Principle 5 of the same document says every outcome is a result. This schema reconciles the two: a refusal emits one `error` result per `plan` entry with `measurement.reason = "policy-unsatisfied-<check>"`. Nothing is measured, but nothing goes missing either.
 
 ## 5. Run context
 
@@ -165,19 +174,21 @@ Every `plan` entry ends as exactly one result, using the five statuses the resul
 | Runner outcome | Stage | `measurement.status` | `measurement.reason` | Extra evidence |
 |---|---|---|---|---|
 | All requested repetitions completed | execute | `success` | — | — |
-| Some repetitions failed or were cut short | execute | `partial` | `repetitions_incomplete` | `procedure.completed_repetitions` |
-| Case exceeded `timeouts.case_s`, time quantity | execute | `censored` | `timeout_case` | constraint `lower_bound` = `case_s` |
-| Case exceeded `timeouts.case_s`, other quantity | execute | `error` | `timeout_case` | — |
+| Some repetitions failed or were cut short | execute | `partial` | `repetitions-incomplete` | `procedure.completed_repetitions` |
+| Case exceeded `timeouts.case_s`, time quantity | execute | `censored` | `timeout-case` | constraint `lower_bound` = `case_s`, `cause` = `timeout` |
+| Case exceeded `timeouts.case_s`, other quantity | execute | `error` | `timeout-case` | — |
 | Harness explicitly skipped the case | execute | `skipped` | harness's own reason | — |
-| Harness crashed mid-suite (remaining entries) | execute | `error` | `harness_crashed` | log in `provenance.artifacts` |
-| Adapter could not translate output | emit | `error` | `adapter_error` | raw output as artifact |
-| Build failed | resolve target | `error` (every entry) | `build_failed` | build log artifact |
-| Policy check failed with `refuse` | prepare | `error` (every entry) | `policy_unsatisfied:<check>` | check result in `observed_context` |
-| `timeouts.order_s` exceeded (unstarted entries) | any | `error` | `timeout_order` | — |
+| Harness crashed mid-suite (remaining entries) | execute | `error` | `harness-crashed` | log in `provenance.artifacts` |
+| Adapter could not translate output | emit | `error` | `adapter-error` | raw output as artifact |
+| Build failed | resolve target | `error` (every entry) | `build-failed` | build log artifact |
+| Policy check failed with `refuse` | prepare | `error` (every entry) | `policy-unsatisfied-<check>` | check result in `observed_context` |
+| `timeouts.order_s` exceeded (unstarted entries) | any | `error` | `timeout-order` | — |
 | Policy check failed with `warn` | prepare / after | unchanged | — | `quality.warnings` entry |
 | Runner process killed | any | no result | — | resolved order shows the gap |
 
-Reasons are drawn from a closed list of codes, optionally followed by `:<detail>`, so dashboards can group failures without parsing free text.
+Reasons are drawn from a closed list of codes, optionally followed by a hyphen and a detail, so dashboards can group failures by prefix without parsing free text.
+
+**Flagged issue (found while fixing the token-regex bug below).** The result schema's `measurement.reason` pattern is `^[a-z0-9]+([.-][a-z0-9]+)*$` (`schemas/measurement-result/0.1.0/schema.json`) — lowercase alphanumeric segments joined only by `.` or `-`. Two things above violated it and are corrected in this revision: the codes used `_` (now `-`, matching `harness-adapter.md`'s own `harness.no-output`-style reasons), and `policy_unsatisfied:<check>` used `:` as a code/detail separator, which the pattern permits nowhere — no delimiter was ever reserved for it. The fix joins code and detail with `-` instead (`policy-unsatisfied-<check>`), which validates, but weakens the original intent: §7's "closed list of codes, optionally followed by a detail, so dashboards can group failures without parsing free text" assumed an unambiguous boundary between the fixed code and the open check name. Joined by the same character multi-word codes already use, that boundary survives only for a human who knows the closed code list, not for an automated grouping-by-prefix reader. `<check>` must itself be hyphen-safe for the composed reason to validate, which is also why `gpu.clocks_locked` in §4.1 is corrected to `gpu.clocks-locked`. A structured alternative — keeping `policy-unsatisfied` as the whole `reason` and carrying `<check>` in a separate field (a new `constraint`-adjacent field, or `provenance.info`) instead of concatenating it — would preserve the separation properly; that's a result-schema change and is left open rather than decided here.
 
 ## 7. Versioning and hashing
 
@@ -188,6 +199,7 @@ All three schemas use the same scheme as `schemas/measurement-result/0.1.0`: sem
 | Work order | `schemas/work-order/0.1.0/` | citing the resolved order from results |
 | Environment policy | `schemas/environment-policy/0.1.0/` | detecting a policy edited without a version bump |
 | Env identity | `schemas/env-identity/0.1.0/` | referenced by `coordinates.environment.schema` |
+| Observed-context record | `schemas/observed-context-record/0.1.0/` | not hashed — validates the `{value, status, when, source}` shape of one `observed_context` entry (§5.3); referenced by convention, not by a `coordinates` field |
 
 Orders and policies are hashed the same way the result schema hashes its fingerprints:
 
@@ -272,7 +284,7 @@ WSL2 exposes no governor, temperature, or throttle counters, so all three are re
 
 1. **Multi-node benchmarks.** 0.1.0 targets one node per order. Should a later version allow a node group (`target.nodes[]` plus a coordinator role), or should a distributed benchmark stay a harness concern behind a single coordinator runner?
 2. **Who stores resolved orders?** The order doubles as the run manifest, but the runner is store-unaware. Does the runner upload the order as an artifact alongside results, or does the requester (scheduler, workbench) keep it?
-3. **Build failure before the plan exists.** §3.2 lets the runner expand `plan` after the build for harnesses that enumerate cases only then. If that build fails there are no plan entries to attach `error` results to. Does the runner emit a single order-level `build_failed` result, and under which workload coordinates?
+3. **Build failure before the plan exists.** §3.2 lets the runner expand `plan` after the build for harnesses that enumerate cases only then. If that build fails there are no plan entries to attach `error` results to. Does the runner emit a single order-level `build-failed` result, and under which workload coordinates?
 4. **Should the observation-record convention move into the result schema?** Today `observed_context` is an open object. Making `{value, status, when, source}` normative there would let every producer, not just this runner, mark facts `unavailable`.
 5. **Sampling overhead.** Sampling temperature and frequency during execution can itself disturb the measurement. What default interval (e.g. 1 s) and core placement keep it negligible, and should the policy be able to turn sampling off?
 6. **Build caching** (`runner.md` open question 1). `build.cache` is modeled as `reuse` | `fresh` | `require-cached`. Is a build its own cacheable artifact with a hash that the order can reference instead?

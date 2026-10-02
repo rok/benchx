@@ -238,6 +238,8 @@ This document narrows what earlier drafts assigned to the runner. The following 
 - **`prototype-scope.md`:** building revisions and environment policy enforcement move from *deferred* to *out of scope*.
 - **UC-03:** the two revisions are built by the caller (`spin`, a CI script); benchx receives two prepared targets, which makes UC-03's setup the same shape as UC-04's.
 
+**Disputed.** `runner-schema.md` (merged 2026-09-23, before this document) keeps the environment-policy enforce/verify/refuse model and buildable target kinds (`revision`, `build`) that this section proposes removing, and states that it is authoritative over this section where they conflict. Not reconciled as of this writing; a reader relying on one of these two documents should check the other.
+
 ## 9. Open questions
 
 1. How is the source of a fact (§3.4) represented in the message: a marker per field, or one provenance map from field path to `declared`, `detected`, or a plugin name?

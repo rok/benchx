@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -71,23 +72,28 @@ def cases(quiet=1.0e-3, noisy=2.0e-3):
 
 
 def order(build: Path, source: Path | None, run_key: str, **extra) -> dict:
-    target = {"kind": "build_dir", "build_dir": str(build)}
+    target = {"kind": "build", "path": str(build), "source": {"uri": SOURCE_URI, "type": "git"}}
     if source is not None:
         target["source_dir"] = str(source)
+    case_s = extra.pop("timeout_seconds", 60)
     document = {
-        "workorder_version": 1,
-        "source": {"uri": SOURCE_URI, "type": "git"},
-        "benchmark": {"kind": "subject"},
-        "harness": {"name": "google-benchmark"},
+        "schema_version": "benchx/work-order/0.1.0",
+        "work_order_id": f"urn:uuid:{uuid.uuid4()}",
+        "state": "resolved",
+        "suites": [{"adapter": "google-benchmark", "suite": "demo-bench"}],
         "target": target,
-        "suite": "demo-bench",
         "quantities": ["wall-time"],
-        "protocol": {"repetitions": {"mode": "fixed", "levels": [{"unit": "repetition", "n": 5}]}},
-        "provenance": {"run_key": run_key},
+        "precision": {"repetitions": 5},
+        "timeouts": {"case_s": case_s, "order_s": 600},
+        "run_key": run_key,
+        "requester": {"kind": "workbench", "name": "tests"},
+        # Decorative: the runner does not yet cross-check plan against the
+        # runtime-discovered case list (runner-schema.md §3.2, still open).
+        "plan": [{"id": "p0", "case": "*", "quantity": "wall-time"}],
     }
     labels = extra.pop("labels", None)
     if labels:
-        document["provenance"]["labels"] = labels
+        document["labels"] = labels
     document.update(extra)
     return document
 

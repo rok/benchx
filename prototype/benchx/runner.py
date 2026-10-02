@@ -1,4 +1,4 @@
-"""Runner: one #35 work order in, one result per attempt × quantity out.
+"""Runner: one work order in, one result per attempt × quantity out.
 
 It changes nothing on the machine (benchmark-environments.md §2). It refuses
 an order it cannot carry out exactly, before running anything; every outcome
@@ -41,9 +41,8 @@ def file_name(key: str) -> str:
 
 
 def _subject_name(order) -> str:
-    if "subject" in order:
-        return order["subject"]["name"]
-    path = urllib.parse.urlparse(order["source"]["uri"]).path.rstrip("/")
+    # runner-schema.md has no order-level name override; always derived.
+    path = urllib.parse.urlparse(order["target"]["source"]["uri"]).path.rstrip("/")
     return path.rsplit("/", 1)[-1].removesuffix(".git") or "subject"
 
 
@@ -53,21 +52,26 @@ def _artifact(kind, media_type, path: Path) -> dict:
 
 
 def check(order: dict) -> None:
-    """Refuse what the prototype cannot apply exactly (#35 W5)."""
+    """Refuse what the prototype cannot apply exactly."""
     core.validate_order(order)
-    if order["harness"]["name"] != "google-benchmark":
-        raise Refused(f"no adapter for harness {order['harness']['name']!r}")
-    if order["target"]["kind"] != "build_dir":
-        raise Refused("only build_dir targets are supported; python_env is deferred")
-    if order["benchmark"]["kind"] != "subject":
+    if len(order["suites"]) != 1:
+        raise Refused("exactly one suite per order is supported")
+    suite = order["suites"][0]
+    if suite["adapter"] != "google-benchmark":
+        raise Refused(f"no adapter for {suite['adapter']!r}")
+    if order["target"]["kind"] != "build":
+        raise Refused(f"only build targets are supported; {order['target']['kind']!r} is deferred")
+    if "benchmark" in order:
         raise Refused("only benchmarks in the subject's own checkout are supported")
+    if "include" in suite or "exclude" in suite:
+        raise Refused("only a single suites[].filter is supported, not include/exclude")
     if "workload_parameters" in order:
         raise Refused("google-benchmark takes no workload_parameters")
     unknown = set(order["quantities"]) - set(gbench.QUANTITIES)
     if unknown:
         raise Refused(f"quantities not supported: {sorted(unknown)}")
     try:
-        gbench.protocol(order.get("protocol"))
+        gbench.protocol(order["precision"])
     except gbench.Unsupported as e:
         raise Refused(str(e)) from None
 
@@ -79,10 +83,10 @@ def run(order_path, out_dir) -> dict:
         check(order)
     except core.DocumentError as e:
         raise Refused(e.message) from None
-    applied_protocol, flags = gbench.protocol(order.get("protocol"))
+    applied_protocol, flags = gbench.protocol(order["precision"])
 
-    build_dir = Path(order["target"]["build_dir"])
-    binary = build_dir / order["suite"]
+    build_dir = Path(order["target"]["path"])
+    binary = build_dir / order["suites"][0]["suite"]
     if not (binary.is_file() and os.access(binary, os.X_OK)):
         raise Refused(f"suite binary not found: {binary}")
     source_dir = order["target"].get("source_dir") or snapshot.cmake_source_dir(build_dir)
@@ -109,12 +113,12 @@ def run(order_path, out_dir) -> dict:
     order_file.write_bytes(core.canonical(order))
 
     attempted = applied_protocol["repetitions"]["levels"][0]["n"]
-    cases = gbench.list_cases(binary, order.get("filter"), child_env)
+    cases = gbench.list_cases(binary, order["suites"][0].get("filter"), child_env)
     written = []
     for index, case in enumerate(cases):
         stem = f"{index:04d}"
         native_path = artifacts_dir / f"{stem}.native.json"
-        run_ = gbench.run_case(binary, case, flags, child_env, order.get("timeout_seconds"), native_path)
+        run_ = gbench.run_case(binary, case, flags, child_env, order["timeouts"]["case_s"], native_path)
         (artifacts_dir / f"{stem}.stdout").write_text(run_["stdout"])
         (artifacts_dir / f"{stem}.stderr").write_text(run_["stderr"])
         artifacts = [_artifact("stdout", "text/plain", artifacts_dir / f"{stem}.stdout"),
@@ -130,16 +134,14 @@ def run(order_path, out_dir) -> dict:
                 procedure["round"] = round_
             if slot is not None:
                 procedure["slot"] = slot
-            if "timeout_seconds" in order:
-                procedure["timeout_seconds"] = order["timeout_seconds"]
-            info = {"workorder_ref": ref, **output["info"]}
+            procedure["timeout_seconds"] = order["timeouts"]["case_s"]
+            info = {"workorder_ref": ref, "requester": order["requester"], **output["info"]}
             if native_info:
                 info["google_benchmark"] = native_info
-            for key in ("requested_by", "reason"):
-                if key in order["provenance"]:
-                    info[key] = order["provenance"][key]
+            if "reason" in order:
+                info["reason"] = order["reason"]
             provenance = {
-                "run_key": order["provenance"]["run_key"],
+                "run_key": order["run_key"],
                 "started_at": _timestamp(run_["started"]),
                 "ended_at": _timestamp(run_["ended"]),
                 "subject_dirty": source["dirty"],
@@ -150,8 +152,8 @@ def run(order_path, out_dir) -> dict:
             }
             if "tree" in source:
                 provenance["subject_tree"] = provenance["benchmark_tree"] = source["tree"]
-            if "labels" in order["provenance"]:
-                provenance["labels"] = order["provenance"]["labels"]
+            if "labels" in order:
+                provenance["labels"] = order["labels"]
             workload = {"name": case}
             if parameters:
                 workload["parameters"] = parameters
@@ -161,16 +163,16 @@ def run(order_path, out_dir) -> dict:
             harness = {"name": "google-benchmark"}
             if native_info.get("library_version"):
                 harness["version"] = native_info["library_version"]
-            key = ingest_key(order["provenance"]["run_key"], case, parameters, output["quantity"]["name"], slot)
+            key = ingest_key(order["run_key"], case, parameters, output["quantity"]["name"], slot)
             document = {
                 "schema_version": 5,
                 "producer": gbench.PRODUCER,
                 "ingest_key": key,
                 "attempt_key": attempt_key,
                 **({"project": order["project"]} if "project" in order else {}),
-                "source": order["source"],
+                "source": order["target"]["source"],
                 "revision": {"key": source["revision"]},
-                "benchmark": {"source": order["source"], "revision": {"key": source["revision"]}},
+                "benchmark": {"source": order["target"]["source"], "revision": {"key": source["revision"]}},
                 "coordinates": {
                     "workload": workload,
                     "subject": subject,

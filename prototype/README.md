@@ -17,8 +17,9 @@ bx compare --run KEY --profile revisions|environments --baseline VALUE
 
 ## What it does
 
-- **Work orders** are the #35 schema (`schemas/work-order/0.1.0` in the
-  repository), extended by the optional `round` and `slot` #35 lists as open.
+- **Work orders** are the `docs/design/runner-schema.md` schema
+  (`schemas/work-order/0.1.0` in the repository), extended by one optional
+  field the schema does not itself define, `slot` (`round` is native).
   One order is one side of one round; the calling script alternates them.
 - **The runner** (`bx run`) validates the order, refuses what it cannot apply
   exactly, runs each planned case in its own process, writes one result file

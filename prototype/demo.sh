@@ -82,24 +82,28 @@ build "$WORK/wt-head" "$WORK/build-hardened" -DDEMO_HARDENED=ON
 # order <file> <build> <source> <run key> <round> <slot> <labels JSON> [project]
 order() {
   "$PYTHON" - "$@" <<'EOF'
-import json, sys
+import json, sys, uuid
 path, build, source, run_key, round_, slot, labels, *project = sys.argv[1:]
 order = {
-    "workorder_version": 1,
-    "source": {"uri": "https://example.org/benchx-demo.git", "type": "git"},
-    "benchmark": {"kind": "subject"},
-    "harness": {"name": "google-benchmark"},
-    "target": {"kind": "build_dir", "build_dir": build, "source_dir": source},
-    "suite": "demo-bench",
+    "schema_version": "benchx/work-order/0.1.0",
+    "work_order_id": f"urn:uuid:{uuid.uuid4()}",
+    "state": "resolved",
+    "suites": [{"adapter": "google-benchmark", "suite": "demo-bench"}],
+    "target": {"kind": "build", "path": build, "source_dir": source,
+               "source": {"uri": "https://example.org/benchx-demo.git", "type": "git"}},
     "quantities": ["wall-time"],
-    "protocol": {"repetitions": {"mode": "fixed", "levels": [{"unit": "repetition", "n": 5}]},
-                 "calibration": {"mode": "adaptive", "minimum_sample_seconds": 0.05}},
+    "precision": {"repetitions": 5, "calibration": {"mode": "adaptive", "minimum_sample_seconds": 0.05}},
+    "timeouts": {"case_s": 60, "order_s": 600},
+    "run_key": run_key,
+    "requester": {"kind": "workbench", "name": "demo.sh"},
+    # Decorative: the runner does not yet cross-check plan against the
+    # runtime-discovered case list (runner-schema.md §3.2, still open).
+    "plan": [{"id": "p0", "case": "*", "quantity": "wall-time"}],
     "round": int(round_),
     "slot": int(slot),
-    "provenance": {"run_key": run_key, "requested_by": "demo.sh"},
 }
 if json.loads(labels):
-    order["provenance"]["labels"] = json.loads(labels)
+    order["labels"] = json.loads(labels)
 if project:
     order["project"] = project[0]
 open(path, "w").write(json.dumps(order, indent=1))

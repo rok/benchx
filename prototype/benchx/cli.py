@@ -109,7 +109,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="bx", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("run", help="execute one work order (#35 schema)")
+    p = sub.add_parser("run", help="execute one work order (schemas/work-order/0.1.0)")
     p.add_argument("order")
     p.add_argument("--out", help="directory for result files (default ./results)")
     p.add_argument("--no-ingest", action="store_true",
