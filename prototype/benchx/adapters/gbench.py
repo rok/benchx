@@ -21,9 +21,9 @@ QUANTITIES = {
 _TO_SECONDS = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0}
 
 # Google Benchmark's own defaults, recorded when the order leaves them out, so
-# no applied setting goes unrecorded (#35 W4a).
-DEFAULT_PROTOCOL = {
-    "repetitions": {"mode": "fixed", "levels": [{"unit": "repetition", "n": 1}]},
+# no applied setting goes unrecorded (work-order §3 "every applied setting is
+# recorded"). precision.repetitions has no default: it is required.
+DEFAULTS = {
     "calibration": {"mode": "adaptive", "minimum_sample_seconds": 0.5},
     "warmup": {"mode": "none"},
 }
@@ -33,19 +33,25 @@ class Unsupported(Exception):
     """An order this adapter cannot apply exactly; the runner refuses it."""
 
 
-def protocol(order_protocol: dict | None) -> tuple[dict, list[str]]:
-    """The full protocol that will apply, and the flags that apply it."""
-    requested = dict(order_protocol or {})
-    unknown = set(requested) - set(DEFAULT_PROTOCOL)
-    if unknown:
-        raise Unsupported(f"protocol keys not supported by google-benchmark: {sorted(unknown)}")
-    applied = {**DEFAULT_PROTOCOL, **requested}
-    flags = []
+def protocol(precision: dict) -> tuple[dict, list[str]]:
+    """The full protocol that will apply, and the flags that apply it.
 
-    levels = applied["repetitions"]["levels"]
+    precision is already schema-valid (work-order §3): repetitions is a bare
+    int or {mode: fixed, levels[]}; calibration and warmup, when present, are
+    mode-tagged per the result schema's Appendix B. Unknown keys are already
+    rejected by the schema, so only gbench-specific unsupported shapes are
+    checked here.
+    """
+    repetitions = precision["repetitions"]
+    levels = [{"unit": "repetition", "n": repetitions}] if isinstance(repetitions, int) else repetitions["levels"]
     if len(levels) != 1 or levels[0]["unit"] != "repetition":
         raise Unsupported("google-benchmark repeats at one level, unit 'repetition'")
-    flags.append(f"--benchmark_repetitions={levels[0]['n']}")
+    applied = {
+        "repetitions": {"mode": "fixed", "levels": levels},
+        "calibration": precision.get("calibration", DEFAULTS["calibration"]),
+        "warmup": precision.get("warmup", DEFAULTS["warmup"]),
+    }
+    flags = [f"--benchmark_repetitions={levels[0]['n']}"]
 
     calibration = applied["calibration"]
     if calibration["mode"] == "adaptive":
@@ -56,8 +62,10 @@ def protocol(order_protocol: dict | None) -> tuple[dict, list[str]]:
     warmup = applied["warmup"]
     if warmup["mode"] == "time":
         flags.append(f"--benchmark_min_warmup_time={warmup['seconds']}")
+    elif warmup["mode"] == "count":
+        raise Unsupported("google-benchmark warmup is time-based only, not count-based")
     elif warmup["mode"] != "none":
-        raise Unsupported("google-benchmark warms up by time only")
+        raise Unsupported(f"unknown warmup mode: {warmup['mode']}")
     return applied, flags
 
 

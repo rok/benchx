@@ -13,11 +13,20 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-# §3.1: never the whole environment; only variables that shape execution.
+# §3.1: never the whole environment; only variables that shape execution: the
+# thread and device variables, and the dynamic loader's search variables. No
+# build or environment management tool is named; a project extends the list
+# with $BENCHX_ENV_ALLOWLIST (comma-separated names).
 ENV_ALLOWLIST = (
     "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS", "CUDA_VISIBLE_DEVICES",
+    "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "LD_PRELOAD",
 )
+
+
+def env_allowlist(env: dict) -> tuple:
+    extra = [n.strip() for n in env.get("BENCHX_ENV_ALLOWLIST", "").split(",") if n.strip()]
+    return ENV_ALLOWLIST + tuple(n for n in extra if n not in ENV_ALLOWLIST)
 
 
 def _run(args, cwd=None):
@@ -66,7 +75,7 @@ def observed_context(child_env: dict) -> dict:
         facts["load_avg_1m"] = round(os.getloadavg()[0], 2)
     except OSError:
         pass
-    env = {k: child_env[k] for k in ENV_ALLOWLIST if k in child_env}
+    env = {k: child_env[k] for k in env_allowlist(child_env) if k in child_env}
     if env:
         facts["env"] = env
     return facts
