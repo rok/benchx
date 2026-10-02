@@ -2,10 +2,12 @@
 
 The schemas are read from the repository's schemas/ directory, or from
 $BENCHX_SCHEMAS: the result schema (schemas/measurement-result/0.1.0) and the
-work-order schema (schemas/work-order/0.1.0, from #35). The work-order schema
-is extended here by exactly the two optional fields the
-prototype needs and #35 lists as open, `round` and `slot`
-(prototype-design.md §2).
+work-order schema (schemas/work-order/0.1.0, from docs/design/runner-schema.md,
+authoritative over the earlier work-order.md proposal). The work-order schema is
+extended here by one optional field the prototype needs and the schema does
+not itself define, `slot` (`round` is now a native field). The target
+description and the target provider request schemas (system-decomposition.md
+§3.4) are read the same way.
 """
 
 import copy
@@ -30,20 +32,26 @@ def _schema(relative: str) -> dict:
 
 RESULT_SCHEMA = _schema("measurement-result/0.1.0/schema.json")
 _ORDER_SCHEMA = _schema("work-order/0.1.0/schema.json")
+DESCRIPTION_SCHEMA = _schema("target-description/0.1.0/schema.json")
+REQUEST_SCHEMA = _schema("target-provider-request/0.1.0/schema.json")
 
 ORDER_SCHEMA = copy.deepcopy(_ORDER_SCHEMA)
-for _name, _meaning in (("round", "procedure.round"), ("slot", "procedure.slot")):
-    ORDER_SCHEMA["properties"][_name] = {
-        "description": f"Prototype extension proposed to #35: copied to {_meaning}.",
-        "type": "integer",
-        "minimum": 0,
-    }
+ORDER_SCHEMA["properties"]["slot"] = {
+    "description": "Prototype extension: the realized position across all sides, copied to procedure.slot. "
+                    "Assigned by whoever coordinates the sides (runner-schema.md §3), not by the runner.",
+    "type": "integer",
+    "minimum": 0,
+}
 
 _REGISTRY = Registry().with_resources(
-    (schema["$id"], Resource.from_contents(schema)) for schema in (RESULT_SCHEMA, ORDER_SCHEMA)
+    (schema["$id"], Resource.from_contents(schema)) for schema in (RESULT_SCHEMA, ORDER_SCHEMA, DESCRIPTION_SCHEMA, REQUEST_SCHEMA)
 )
 _RESULT_VALIDATOR = jsonschema.Draft202012Validator(RESULT_SCHEMA, registry=_REGISTRY)
 _ORDER_VALIDATOR = jsonschema.Draft202012Validator(ORDER_SCHEMA, registry=_REGISTRY)
+_PRECISION_VALIDATOR = jsonschema.Draft202012Validator(
+    {"$ref": ORDER_SCHEMA["$id"] + "#/properties/precision"}, registry=_REGISTRY)
+_DESCRIPTION_VALIDATOR = jsonschema.Draft202012Validator(DESCRIPTION_SCHEMA, registry=_REGISTRY)
+_REQUEST_VALIDATOR = jsonschema.Draft202012Validator(REQUEST_SCHEMA, registry=_REGISTRY)
 
 
 class DocumentError(Exception):
@@ -97,7 +105,7 @@ def sha256_hex(data: bytes) -> str:
 
 
 def order_ref(order: dict) -> str:
-    """#35 §5: the reference a result carries to the order that produced it."""
+    """The reference a result carries to the order that produced it."""
     return "sha256:" + sha256_hex(canonical(order))
 
 
@@ -114,3 +122,15 @@ def validate_result(document: dict) -> None:
 
 def validate_order(order: dict) -> None:
     _validate(_ORDER_VALIDATOR, order, "work order")
+
+
+def validate_precision(precision: dict) -> None:
+    _validate(_PRECISION_VALIDATOR, precision, "precision")
+
+
+def validate_description(description: dict) -> None:
+    _validate(_DESCRIPTION_VALIDATOR, description, "target description")
+
+
+def validate_request(request: dict) -> None:
+    _validate(_REQUEST_VALIDATOR, request, "target provider request")
