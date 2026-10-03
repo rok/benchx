@@ -15,7 +15,10 @@ def read(path: Path) -> tuple[dict[str, Any] | None, list[ReadError]]:
     text = _read_text(path)
     if isinstance(text, ReadError):
         return None, [text]
+    return parse(text)
 
+
+def parse(text: str) -> tuple[dict[str, Any] | None, list[ReadError]]:
     errors: list[ReadError] = []
     data = _parse(text, errors)
     if errors:
@@ -23,6 +26,11 @@ def read(path: Path) -> tuple[dict[str, Any] | None, list[ReadError]]:
 
     if not isinstance(data, dict):
         return None, [ReadError(reason="top level must be a JSON object")]
+
+    try:
+        json.dumps(data, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        return None, [ReadError(reason="string contains an unpaired surrogate")]
 
     return data, []
 

@@ -50,6 +50,11 @@ def test_top_level_must_be_object(write, text):
     )
 
 
+def test_unpaired_surrogate(write):
+    issue = error(write('{"a": "\\ud800"}'))
+    assert type(issue) is ReadError and "unpaired surrogate" in issue.message
+
+
 def test_duplicate_key(write):
     issue = error(write('{"a": 1, "b": {"c": 1, "c": 2}}'))
     assert issue == DuplicateKey(key="c")

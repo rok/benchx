@@ -14,7 +14,9 @@ from pathlib import Path
 import pytest
 
 from benchx import runner
+from benchx.core.catalog import SCHEMAS
 
+EXAMPLES = SCHEMAS / "measurement-result" / "0.1.0" / "examples"
 FAKE = Path(__file__).with_name("fake_gbench.py")
 SOURCE_URI = "https://example.org/demo.git"
 QUIET, NOISY = "BM_Quiet/1024", "BM_Noisy/1024"
@@ -123,3 +125,35 @@ def copy_tree(src: Path, dst: Path) -> Path:
 
 
 os.environ.setdefault("GIT_CONFIG_NOSYSTEM", "1")
+
+
+# Documents for the core tests: the schema's own examples, and a file writer.
+
+
+@pytest.fixture(params=sorted(EXAMPLES.glob("*.json")), ids=lambda path: path.stem)
+def example(request) -> dict:
+    return json.loads(request.param.read_text())
+
+
+@pytest.fixture
+def adhoc() -> dict:
+    return json.loads((EXAMPLES / "adhoc.json").read_text())
+
+
+@pytest.fixture
+def arrow() -> dict:
+    return json.loads((EXAMPLES / "arrow.json").read_text())
+
+
+@pytest.fixture
+def write(tmp_path):
+    def _write(content: str | bytes | dict) -> Path:
+        path = tmp_path / "doc.json"
+        if isinstance(content, dict):
+            content = json.dumps(content)
+        if isinstance(content, str):
+            content = content.encode()
+        path.write_bytes(content)
+        return path
+
+    return _write

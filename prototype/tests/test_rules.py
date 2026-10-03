@@ -10,7 +10,9 @@ from benchx.core.errors import (
     EmptyInterval,
     EndedBeforeStarted,
     PrimarySourceMismatch,
+    RelativeTargetPath,
     RuleViolation,
+    SharedParameterName,
 )
 
 
@@ -28,10 +30,52 @@ def test_examples_break_no_rules(example):
     assert check(example) == []
 
 
-@pytest.mark.parametrize("kind", ["work-order", "comparison-document"])
-def test_rules_not_implemented(kind):
-    with pytest.raises(NotImplementedError, match=kind):
-        list(rules.check({}, kind))
+def order(**fields) -> dict:
+    return {"target": {"kind": "build_dir", "build_dir": "/work/build"}, **fields}
+
+
+def test_well_formed_order_breaks_no_rules():
+    document = order(
+        environment_variables={"OMP_NUM_THREADS": "1"}, workload_parameters={"size": 10}
+    )
+    assert list(rules.check(document, "work-order")) == []
+
+
+@pytest.mark.parametrize(
+    "path", ["/work/build", "C:\\work\\build", "\\\\host\\share\\build"]
+)
+def test_absolute_target_paths_on_either_system(path):
+    document = order(target={"kind": "build_dir", "build_dir": path})
+    assert list(rules.check(document, "work-order")) == []
+
+
+def test_relative_target_paths():
+    document = order(
+        target={"kind": "build_dir", "build_dir": "build", "source_dir": "../src"}
+    )
+    assert list(rules.check(document, "work-order")) == [
+        RelativeTargetPath(path=("target", "build_dir"), value="build"),
+        RelativeTargetPath(path=("target", "source_dir"), value="../src"),
+    ]
+
+
+def test_name_shared_by_environment_and_parameters():
+    document = order(
+        environment_variables={"threads": "1", "OMP_NUM_THREADS": "1"},
+        workload_parameters={"threads": 1, "size": 10},
+    )
+    [issue] = rules.check(document, "work-order")
+    assert issue == SharedParameterName(
+        path=("workload_parameters", "threads"), name="threads"
+    )
+    assert issue.message == (
+        "'threads' is both an environment variable and a workload parameter"
+    )
+
+
+def test_rules_not_implemented():
+    with pytest.raises(NotImplementedError, match="comparison-document"):
+        list(rules.check({}, "comparison-document"))
 
 
 def test_primary_source_mismatch(adhoc):

@@ -11,7 +11,10 @@ from typing import Any
 
 from . import loader, rules, validation
 from .errors import DocumentError
+from .hashing import canonical, order_ref, sha256_hex
 from .validation import Kind
+
+__all__ = ["Inspection", "canonical", "check", "inspect", "order_ref", "sha256_hex"]
 
 
 @dataclass
@@ -31,11 +34,16 @@ def inspect(path: Path, kind: Kind) -> Inspection:
     if data is None:
         return Inspection(path, kind, None, read_errors)
 
+    errors = check(data, kind)
+    return Inspection(path, kind, None if errors else data, errors)
+
+
+def check(data: dict[str, Any], kind: Kind) -> Sequence[DocumentError]:
     validator, schema_errors = validation.find_schema(data, kind)
     if validator is None:
-        return Inspection(path, kind, None, schema_errors)
+        return schema_errors
 
     errors: list[DocumentError] = list(validation.check(data, validator))
     if not errors:
         errors = list(rules.check(data, kind))
-    return Inspection(path, kind, None if errors else data, errors)
+    return errors

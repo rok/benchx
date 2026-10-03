@@ -11,7 +11,15 @@ from datetime import datetime
 import pyarrow as pa
 import rfc8785
 
-from .core import RESULT_SCHEMA
+from .core import catalog
+
+_VALIDATOR = catalog.lookup("measurement-result", 5)
+if _VALIDATOR is None:
+    raise RuntimeError(
+        f"result schema not found under {catalog.SCHEMAS}; "
+        "run from a benchx checkout or set BENCHX_SCHEMAS"
+    )
+RESULT_SCHEMA = _VALIDATOR.schema
 
 TIMESTAMP = pa.timestamp("us", tz="UTC")
 SCALARS = {"string": pa.string(), "integer": pa.int64(), "number": pa.float64(), "boolean": pa.bool_()}

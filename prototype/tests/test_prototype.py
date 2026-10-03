@@ -10,8 +10,12 @@ from benchx.store import Store
 from conftest import NOISY, QUIET, cases, make_build, order, run_rounds
 
 
+def load(path: Path) -> dict:
+    return json.loads(path.read_text())
+
+
 def results(directory: Path) -> list[dict]:
-    return [core.load(p) for p in sorted(directory.glob("*.json")) if not p.name.startswith("workorder-")]
+    return [load(p) for p in sorted(directory.glob("*.json")) if not p.name.startswith("workorder-")]
 
 
 def verdicts(doc) -> dict:
@@ -41,7 +45,7 @@ def test_results_are_valid_documents(revisions_run):
     docs = results(revisions_run)
     assert len(docs) == 2 * 6 * 2  # cases × rounds × sides
     for doc in docs:
-        core.validate_result(doc)  # criterion 1: the file is the ingest payload
+        assert core.check(doc, "measurement-result") == []  # criterion 1: the file is the ingest payload
         assert doc["provenance"]["subject_dirty"] == "clean"
         assert doc["coordinates"]["environment"]["schema"] == "machine/v1"
         config = doc["coordinates"]["subject"]["configuration"]
@@ -325,7 +329,7 @@ def test_head(revisions_run, tmp):
     assert total == 24 and [r["row"] for r in rows] == [23, 22, 21]
     assert all(r["run_key"] == "rev-1" and r["status"] == "success" and r["median"] > 0 for r in rows)
     ingested_last = sorted(p for p in revisions_run.glob("*.json") if not p.name.startswith("workorder-"))[-1]
-    assert core.loads(rows[0]["document"]) == core.load(ingested_last)
+    assert json.loads(rows[0]["document"]) == load(ingested_last)
 
 
 def test_bx_run_delivers_to_the_local_store(repo, tmp, capsys):
@@ -341,6 +345,6 @@ def test_bx_run_delivers_to_the_local_store(repo, tmp, capsys):
     assert cli.main(["run", str(tmp / "o2.json"), "--out", str(tmp / "out"), "--no-ingest"]) == 0
     assert len(results(tmp / "out")) == 4  # both runs' files are written
     total, rows = Store().head()
-    assert total == 2 and {core.load(tmp / "o1.json")["provenance"]["run_key"]} == {r["run_key"] for r in rows}
-    ref = core.loads(rows[0]["document"])["provenance"]["info"]["workorder_ref"]
-    assert Store().order(ref) == core.load(tmp / "o1.json")  # the order travelled with its results
+    assert total == 2 and {load(tmp / "o1.json")["provenance"]["run_key"]} == {r["run_key"] for r in rows}
+    ref = json.loads(rows[0]["document"])["provenance"]["info"]["workorder_ref"]
+    assert Store().order(ref) == load(tmp / "o1.json")  # the order travelled with its results

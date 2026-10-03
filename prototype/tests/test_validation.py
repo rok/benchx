@@ -78,10 +78,10 @@ def test_finds_result_schema(adhoc):
             "no schema for measurement-result version 4",
         ),
         (
-            {"workorder_version": 1},
+            {"workorder_version": 2},
             "work-order",
             ("workorder_version",),
-            "no schema for work-order version 1",
+            "no schema for work-order version 2",
         ),
     ],
 )

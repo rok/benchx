@@ -13,6 +13,8 @@ bx history <series>                      # one series' points (a query)
 bx head [-n 10] [--json]                 # the latest results in the store, newest first
 bx compare --run KEY --profile revisions|environments --baseline VALUE
            [--label NAME] [--results DIR] [--k 3] [--json]
+bx validate <file>… [--kind measurement-result|work-order|comparison-document]
+                                         # every problem in each document, by schema and rules
 ```
 
 ## What it does
@@ -49,7 +51,7 @@ bx compare --run KEY --profile revisions|environments --baseline VALUE
 
 ```console
 $ uv venv && uv pip install -e '.[test]'   # editable: schemas are read from ../schemas
-$ .venv/bin/python -m pytest tests     # 38 tests, fake Google Benchmark binary, no compiler
+$ .venv/bin/python -m pytest tests     # 130 tests, fake Google Benchmark binary, no compiler
 $ ./demo.sh                             # real builds; needs cmake, a C++ compiler, network once
 ```
 
@@ -87,7 +89,13 @@ repetitions, does not.
 
 ```
 benchx/
-  core.py            strict JSON, schema validation, canonical form, order reference
+  core/              reading and checking documents; problems are returned, not raised
+    loader.py        strict JSON: duplicate keys, non-finite and inexact numbers
+    catalog.py       the schemas, by kind and version
+    validation.py    which schema a document declares, and whether it fits
+    rules.py         what the result and work-order schemas cannot express
+    errors.py        every problem, with its schema §5.4 rejection code
+    hashing.py       canonical form, hashes, order reference
   snapshot.py        what the runner records (benchmark-environments.md §3)
   adapters/gbench.py Google Benchmark, driving and translating halves
   runner.py          one work order in, results out
@@ -100,5 +108,7 @@ benchx/
 examples/demo-suite  a two-benchmark Google Benchmark suite for the demo
 tests/               test_prototype.py: the success criteria and the runner and store
                      rules, on a fake Google Benchmark binary; test_comparator.py: the
-                     comparator's invariants and method on hand-built results
+                     comparator's invariants and method on hand-built results;
+                     test_loader, test_validation, test_rules, test_pipeline,
+                     test_validate: core and `bx validate`, on the schema's examples
 ```

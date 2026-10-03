@@ -54,7 +54,6 @@ def _artifact(kind, media_type, path: Path) -> dict:
 
 def check(order: dict) -> None:
     """Refuse what the prototype cannot apply exactly (#35 W5)."""
-    core.validate_order(order)
     if order["harness"]["name"] != "google-benchmark":
         raise Refused(f"no adapter for harness {order['harness']['name']!r}")
     if order["target"]["kind"] != "build_dir":
@@ -74,11 +73,12 @@ def check(order: dict) -> None:
 
 def run(order_path, out_dir) -> dict:
     """Execute one order; write results and the order into out_dir."""
-    order = core.load(order_path)
-    try:
-        check(order)
-    except core.DocumentError as e:
-        raise Refused(e.message) from None
+    inspection = core.inspect(Path(order_path), "work-order")
+    if inspection.data is None:
+        problems = "; ".join(str(error) for error in inspection.errors)
+        raise Refused(f"work order invalid: {problems}")
+    order = inspection.data
+    check(order)
     applied_protocol, flags = gbench.protocol(order.get("protocol"))
 
     build_dir = Path(order["target"]["build_dir"])
@@ -185,15 +185,16 @@ def run(order_path, out_dir) -> dict:
             }
             if setup_warning:
                 document["quality"] = {"warnings": [setup_warning]}
-            try:
-                core.validate_result(document)
-            except core.DocumentError as e:
+            errors = core.check(document, "measurement-result")
+            if errors:
                 # harness-adapter.md §4.1: never drop a case, never emit an invalid document.
                 document["measurement"] = {"status": "error", "reason": "adapter.mapping-failed"}
-                document["provenance"]["info"]["mapping_error"] = e.message
+                document["provenance"]["info"]["mapping_error"] = str(errors[0])
                 document["procedure"] = {k: v for k, v in procedure.items()
                                          if k not in ("inner_iterations", "completed_repetitions")}
-                core.validate_result(document)
+                errors = core.check(document, "measurement-result")
+                if errors:
+                    raise RuntimeError(f"the error result is itself invalid: {errors[0]}")
             path = out_dir / file_name(key)
             path.write_bytes(core.canonical(document))
             written.append(path)

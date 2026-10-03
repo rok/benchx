@@ -12,6 +12,7 @@ it, which is atomic. The acknowledgment therefore means validated and durable
 (schema §5.4). Uniqueness checks are scans, which is fine at prototype scale.
 """
 
+import json
 import os
 import statistics
 from pathlib import Path
@@ -20,6 +21,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from . import core, identity, parquet
+from .core import loader
+from .core.errors import AttemptConflict, DocumentError, IdempotencyConflict, UnitConflict
 
 # Schema §5.3 attempt integrity: what results sharing an attempt_key agree on.
 _ATTEMPT_FIELDS = ("project", "source", "revision", "benchmark")
@@ -79,7 +82,7 @@ class Store:
         if table is None:
             return []
         run_keys = table.column("provenance").combine_chunks().field("run_key").to_pylist()
-        return [core.loads(text) for r, text in zip(run_keys, table.column("document").to_pylist())
+        return [json.loads(text) for r, text in zip(run_keys, table.column("document").to_pylist())
                 if run_key is None or r == run_key]
 
     def documents(self, run_key: str) -> list[dict]:
@@ -92,7 +95,7 @@ class Store:
             return None
         for r, text in zip(table.column("work_order_ref").to_pylist(), table.column("work_order").to_pylist()):
             if r == ref and text is not None:
-                return core.loads(text)
+                return json.loads(text)
         return None
 
     def head(self, n: int = 10) -> tuple[int, list[dict]]:
@@ -150,15 +153,20 @@ class Store:
         files = []
         for path in map(Path, paths):
             files.extend(sorted(path.glob("*.json")) if path.is_dir() else [path])
-        orders, documents = {}, []
+        orders, documents, unreadable = {}, [], []
         for f in files:
             text = f.read_text(encoding="utf-8")
-            if f.name.startswith("workorder-"):
-                order = core.loads(text)
-                orders[core.order_ref(order)] = order
-            else:
+            if not f.name.startswith("workorder-"):
                 documents.append((f.name, text))
-        return self.ingest(documents, orders)
+                continue
+            order, errors = loader.parse(text)
+            if order is None:
+                unreadable.append(_rejection(f.name, errors[0]))
+            else:
+                orders[core.order_ref(order)] = order
+        outcome = self.ingest(documents, orders)
+        outcome["rejected"] = unreadable + outcome["rejected"]
+        return outcome
 
     def ingest(self, documents: list[tuple[str, str]], orders: dict | None = None) -> dict:
         """Per-result outcomes; a batch is N independent documents (§5.4)."""
@@ -171,33 +179,34 @@ class Store:
         accepted, derived = [], []
         outcome = {"ingested": 0, "duplicate": 0, "rejected": []}
         for name, text in documents:
-            try:
-                doc = core.loads(text)
-                if not isinstance(doc, dict):
-                    raise core.DocumentError("malformed", "document is not an object")
-                core.validate_result(doc)
-                project = store_project(doc)
-                _check_identity(doc)
-                canonical = core.canonical(doc)
-                payload = core.sha256_hex(canonical)
-                key = (doc["producer"]["name"], doc["ingest_key"])
-                if key in existing:
-                    if existing[key] != payload:
-                        raise core.DocumentError("idempotency-conflict",
-                                                 "same (producer, ingest_key), different payload")
-                    outcome["duplicate"] += 1
-                    continue
-                quantity = doc["coordinates"]["quantity"]
-                known = units.get((project, quantity["name"]))
-                if known and known != quantity["unit"]:
-                    raise core.DocumentError("unit-conflict", f"quantity {quantity['name']!r} is "
-                                             f"{known!r} in {project}, got {quantity['unit']!r}")
-                signature = _attempt_signature(doc)
-                if attempts.setdefault(doc["attempt_key"], signature) != signature:
-                    raise core.DocumentError("attempt-conflict",
-                                             f"results of attempt {doc['attempt_key']} disagree (schema §5.3)")
-            except core.DocumentError as e:
-                outcome["rejected"].append({"document": name, "code": e.code, "message": e.message})
+            doc, errors = loader.parse(text)
+            if doc is not None:
+                errors = core.check(doc, "measurement-result")
+            if errors:
+                outcome["rejected"].append(_rejection(name, errors[0]))
+                continue
+
+            project = store_project(doc)
+            canonical = core.canonical(doc)
+            payload = core.sha256_hex(canonical)
+            key = (doc["producer"]["name"], doc["ingest_key"])
+            quantity = doc["coordinates"]["quantity"]
+            known = units.get((project, quantity["name"]))
+            signature = _attempt_signature(doc)
+            if key in existing and existing[key] == payload:
+                outcome["duplicate"] += 1
+                continue
+            if key in existing:
+                conflict = IdempotencyConflict()
+            elif known and known != quantity["unit"]:
+                conflict = UnitConflict(quantity=quantity["name"], project=project,
+                                        known=known, reported=quantity["unit"])
+            elif attempts.setdefault(doc["attempt_key"], signature) != signature:
+                conflict = AttemptConflict(attempt_key=doc["attempt_key"])
+            else:
+                conflict = None
+            if conflict is not None:
+                outcome["rejected"].append(_rejection(name, conflict))
                 continue
 
             existing[key] = payload
@@ -234,12 +243,9 @@ class Store:
         os.replace(tmp, self.path)
 
 
-def _check_identity(doc: dict) -> None:
-    """Schema §5.4 identity violation: a primary whose source differs from the axis."""
-    for component in doc["coordinates"]["subject"]["components"]:
-        if component["role"] == "primary" and component.get("source") not in (None, doc["source"]["uri"]):
-            raise core.DocumentError("identity-violation",
-                                     "primary component source differs from the top-level source")
+def _rejection(name: str, error: DocumentError) -> dict:
+    where = f"at {error.location}: " if error.location else ""
+    return {"document": name, "code": str(error.code), "message": where + error.message}
 
 
 _ENTITY_KEYS = {

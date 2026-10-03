@@ -9,9 +9,11 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from typing import get_args
 
 from . import compare as compare_mod
-from . import runner
+from . import core, runner
+from .core.validation import Kind
 from .store import Store
 
 
@@ -105,6 +107,17 @@ def _compare(store, args):
     return 0
 
 
+def cmd_validate(args):
+    valid = 0
+    for path in args.files:
+        inspection = core.inspect(path, args.kind)
+        for error in inspection.errors:
+            print(f"{path}: {error}", file=sys.stderr)
+        valid += inspection.valid
+    print(f"{valid}/{len(args.files)} valid", file=sys.stderr)
+    return 0 if valid == len(args.files) else 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="bx", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -146,6 +159,13 @@ def main(argv=None):
     p.add_argument("--min-rounds", type=int, default=3)
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_compare)
+
+    p = sub.add_parser("validate", help="check documents against their schema and rules",
+                       description="Report every problem in each document, or nothing when all are valid.")
+    p.add_argument("files", type=Path, nargs="+")
+    p.add_argument("--kind", choices=get_args(Kind), default="measurement-result",
+                   help="kind of document being checked (default: %(default)s)")
+    p.set_defaults(fn=cmd_validate)
 
     args = ap.parse_args(argv)
     return args.fn(args)

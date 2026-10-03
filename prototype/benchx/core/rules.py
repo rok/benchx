@@ -1,8 +1,13 @@
-"""Rules JSON Schema cannot express. They assume the document fits its schema."""
+"""Rules JSON Schema cannot express. They assume the document fits its schema.
+
+They hold for the document alone: what one runner or machine cannot carry out
+is that runner's refusal, not a rule.
+"""
 
 import json
 from collections.abc import Iterator
 from datetime import datetime
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, assert_never
 
 from .errors import (
@@ -12,7 +17,9 @@ from .errors import (
     EndedBeforeStarted,
     PathParts,
     PrimarySourceMismatch,
+    RelativeTargetPath,
     RuleViolation,
+    SharedParameterName,
 )
 from .validation import Kind
 
@@ -20,7 +27,9 @@ from .validation import Kind
 def check(data: dict[str, Any], kind: Kind) -> Iterator[RuleViolation]:
     if kind == "measurement-result":
         yield from check_result(data)
-    elif kind == "work-order" or kind == "comparison-document":
+    elif kind == "work-order":
+        yield from check_order(data)
+    elif kind == "comparison-document":
         raise NotImplementedError(f"no rules for {kind} yet")
     else:
         assert_never(kind)
@@ -131,3 +140,28 @@ def repetition_counts(data: dict[str, Any]) -> Iterator[RuleViolation]:
             completed=completed,
             attempted=attempted,
         )
+
+
+def check_order(data: dict[str, Any]) -> Iterator[RuleViolation]:
+    for rule in [absolute_target_paths, distinct_parameter_names]:
+        yield from rule(data)
+
+
+def absolute_target_paths(data: dict[str, Any]) -> Iterator[RuleViolation]:
+    for field in ("build_dir", "python", "source_dir"):
+        value = data["target"].get(field)
+        if value is None:
+            continue
+
+        # Absolute on either kind of system: validity must not depend on this machine.
+        if not (
+            PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()
+        ):
+            yield RelativeTargetPath(path=("target", field), value=value)
+
+
+def distinct_parameter_names(data: dict[str, Any]) -> Iterator[RuleViolation]:
+    variables = data.get("environment_variables", {})
+    for name in data.get("workload_parameters", {}):
+        if name in variables:
+            yield SharedParameterName(path=("workload_parameters", name), name=name)
