@@ -10,7 +10,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+from . import bench as bench_mod
 from . import compare as compare_mod
+from . import config as config_mod
 from . import runner, session
 from . import target as target_mod
 from .store import Store
@@ -33,6 +35,51 @@ def cmd_run(args):
     store = Store()
     print(f"{store.path}: ", end="")
     return _report(store.ingest_paths(summary["files"]))
+
+
+def cmd_bench(args):
+    """Benchmark functions of a Python module with pyperf: build the order from
+    the config file, flags and environment variables, run it, deliver, print a table."""
+    env = {}
+    for item in args.env or []:
+        name, eq, value = item.partition("=")
+        if not (name and eq):
+            print(f"bx bench: error: -e wants NAME=VALUE, not {item!r}", file=sys.stderr)
+            return 2
+        env[name] = value
+    try:
+        flags = bench_mod.flags_to_precision(args.processes, args.values, args.min_time, args.loops, args.warmups)
+        order, config_path = bench_mod.build_order(
+            args.module, args.functions, tree=args.tree, precision_flags=flags, environment_variables=env,
+            project=args.project, run_key=args.run_key, case_s=args.case_timeout)
+        out = Path(args.out) if args.out else Path("results") / order["run_key"]
+        reps = {lv["unit"]: lv["n"] for lv in order["precision"]["repetitions"]["levels"]}
+        print(f"precision: {reps['process']} processes x {reps['value']} values "
+              f"(config: {config_path or 'none, pyperf defaults'})", file=sys.stderr)
+        summary = bench_mod.run_order(order, out)
+    except (bench_mod.SessionError, config_mod.ConfigError) as e:
+        print(f"bx bench: error: {e}", file=sys.stderr)
+        return 2
+    except runner.Refused as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
+    print(bench_mod.render(bench_mod.summarize(summary["files"])))
+    print(f"\n{summary['results']} result(s) -> {summary['out']}  (order {summary['order'][:19]})")
+    if args.no_ingest:
+        return 0
+    store = Store()
+    print(f"{store.path}: ", end="")
+    return _report(store.ingest_paths(summary["files"]))
+
+
+def cmd_config(args):
+    try:
+        path = config_mod.write_template(args.dir)
+    except config_mod.ConfigError as e:
+        print(f"bx config: error: {e}", file=sys.stderr)
+        return 2
+    print(f"wrote {path}")
+    return 0
 
 
 def _report(outcome):
@@ -197,6 +244,34 @@ def main(argv=None):
     p.add_argument("--no-ingest", action="store_true",
                    help="only write the result files; do not deliver them to the local store")
     p.set_defaults(fn=cmd_run)
+
+    p = sub.add_parser("bench", help="benchmark functions of a Python module with pyperf",
+                       description="bx bench MODULE [FUNCTION ...]: each FUNCTION is a case. With none, the "
+                                   "module's bench_* and benchmark_* functions. Precision comes from "
+                                   ".benchx/config.json (bx config init writes one) and the flags below; "
+                                   "flags win, and pyperf's defaults fill the rest.")
+    p.add_argument("module", help="a Python file; its tree is its git checkout, or --tree")
+    p.add_argument("functions", nargs="*", metavar="FUNCTION")
+    p.add_argument("--tree", help="the tree being measured (default: the module's git checkout or directory)")
+    p.add_argument("--processes", type=int, help="worker processes (pyperf default 20)")
+    p.add_argument("--values", type=int, help="values per process (pyperf default 3)")
+    p.add_argument("--min-time", type=float, help="adaptive calibration: minimum seconds per value")
+    p.add_argument("--loops", type=int, help="fixed calibration: inner loops per value")
+    p.add_argument("--warmups", type=int, help="warmup values per process (0: none)")
+    p.add_argument("-e", "--env", action="append", metavar="NAME=VALUE",
+                   help="set an environment variable for the benchmark (repeatable)")
+    p.add_argument("--project", help="name a project, so results join its series; omit for an ad hoc run")
+    p.add_argument("--run-key", help="default: bench-<UTC timestamp>")
+    p.add_argument("--out", help="directory for the order and result files (default ./results/RUN_KEY)")
+    p.add_argument("--case-timeout", type=float, default=bench_mod.CASE_TIMEOUT_S,
+                   help="seconds allowed per function (default %(default)s)")
+    p.add_argument("--no-ingest", action="store_true", help="only write result files; skip the local store")
+    p.set_defaults(fn=cmd_bench)
+
+    p = sub.add_parser("config", help="manage .benchx/config.json")
+    p.add_argument("action", choices=["init"], help="init: write a template stating pyperf's defaults")
+    p.add_argument("--dir", default=".", help="where to write .benchx/config.json (default .)")
+    p.set_defaults(fn=cmd_config)
 
     p = sub.add_parser("ingest", help="sweep result files and work orders into the local store")
     p.add_argument("paths", nargs="+")

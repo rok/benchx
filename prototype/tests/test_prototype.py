@@ -227,8 +227,9 @@ def test_failures_are_results(repo, tmp):
 
 @pytest.mark.parametrize("change, message", [
     (lambda o: o["precision"].update(warmup={"mode": "count", "n_warmup": 2}), "warmup"),
-    (lambda o: o.update(target={"kind": "working_tree", "path": "/tmp/x",
-                                "source": {"uri": SOURCE_URI, "type": "git"}}), "build targets"),
+    (lambda o: o.update(target={"kind": "artifact", "uri": "file:///tmp/x", "sha256": "0" * 64,
+                                "source": {"uri": SOURCE_URI, "type": "git"}, "revision": "abc"}),
+     "build and working_tree targets"),
     (lambda o: o.update(target={"kind": "revision", "source": {"uri": SOURCE_URI, "type": "git"},
                                 "revision": "deadbeef"}), "work order invalid"),  # the runner never builds
     (lambda o: o.update(environment_policy={"name": "laptop-default", "version": "1.0.0"}),
@@ -383,3 +384,58 @@ def test_bx_run_delivers_to_the_local_store(repo, tmp, capsys):
     assert total == 2 and {core.load(tmp / "o1.json")["run_key"]} == {r["run_key"] for r in rows}
     ref = core.loads(rows[0]["document"])["provenance"]["info"]["workorder_ref"]
     assert Store().order(ref) == core.load(tmp / "o1.json")  # the order travelled with its results
+
+
+def _working_tree_order(path, run_key, **target):
+    document = order(path, None, run_key)
+    document["target"] = {"kind": "working_tree", "path": str(path),
+                          "source": {"uri": SOURCE_URI, "type": "git"}, **target}
+    return document
+
+
+def _run_working_tree(tmp, document, name):
+    path = tmp / f"{name}.json"
+    path.write_text(json.dumps(document))
+    runner.run(path, tmp / name)
+    return results(tmp / name)
+
+
+def test_working_tree_records_git_identity_dirty_and_untouched(repo, tmp):
+    """A working_tree target is measured as found: HEAD, dirty, and a tree no commit has."""
+    checkout = repo["wt-head"]
+    make_build(checkout / "bin", checkout, cases())  # untracked files make the tree dirty
+    identity_before = runner.snapshot.git_identity(checkout)
+    docs = _run_working_tree(tmp, _working_tree_order(checkout / "bin", "wt-git", source_dir=str(checkout)), "wt-git")
+    assert docs
+    for doc in docs:
+        core.validate_result(doc)
+        assert doc["revision"]["key"] == repo["head"]
+        assert doc["provenance"]["subject_dirty"] == "dirty"
+        assert doc["provenance"]["subject_tree"] == identity_before["tree"] != repo["head"]
+        assert "configuration" not in doc["coordinates"]["subject"]
+    # Never cleaned or checked out; the fake benchmark's own counter file is the only change.
+    assert runner.snapshot.git_identity(checkout)["revision"] == repo["head"]
+    assert (checkout / "bin" / "demo-bench").exists()
+
+
+def test_working_tree_defaults_to_the_target_path_for_identity(repo, tmp):
+    checkout = repo["wt-head"]
+    make_build(checkout / "bin", checkout, cases())
+    docs = _run_working_tree(tmp, _working_tree_order(checkout / "bin", "wt-default"), "wt-default")
+    assert {d["revision"]["key"] for d in docs} == {repo["head"]}
+
+
+def test_working_tree_outside_git_falls_back_to_a_directory_hash(tmp):
+    plain = tmp / "plain"
+    plain.mkdir()
+    (plain / "mod.py").write_text("x = 1\n")
+    make_build(plain / "bin", plain, cases())
+    tree = runner.snapshot.directory_identity(plain)["tree"]  # taken before the run, as the runner does
+    docs = _run_working_tree(tmp, _working_tree_order(plain / "bin", "wt-dir", source_dir=str(plain)), "wt-dir")
+    for doc in docs:
+        core.validate_result(doc)
+        assert doc["provenance"]["subject_dirty"] == "dirty"
+        assert doc["provenance"]["subject_tree"] == tree
+        assert doc["revision"]["key"] == f"directory-{tree}"
+    (plain / "mod.py").write_text("x = 2\n")
+    assert runner.snapshot.directory_identity(plain)["tree"] != tree  # content, not time, identifies it

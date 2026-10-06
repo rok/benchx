@@ -7,10 +7,17 @@ The runner supplies everything else a result needs (the context document).
 """
 
 import json
+import os
 import re
 import subprocess
 import time
+from pathlib import Path
 
+from .base import Unsupported
+
+NAME = "google-benchmark"
+CONTEXT_KEY = "google_benchmark"
+WORKLOAD_PARAMETERS = False
 PRODUCER = {"name": "benchx/gbench-adapter", "version": "0.1.0", "mapping_version": "gbench-to-benchx/v1"}
 
 # Native field, canonical quantity (Appendix A), and direction.
@@ -27,10 +34,6 @@ DEFAULTS = {
     "calibration": {"mode": "adaptive", "minimum_sample_seconds": 0.5},
     "warmup": {"mode": "none"},
 }
-
-
-class Unsupported(Exception):
-    """An order this adapter cannot apply exactly; the runner refuses it."""
 
 
 def protocol(precision: dict) -> tuple[dict, list[str]]:
@@ -69,6 +72,27 @@ def protocol(precision: dict) -> tuple[dict, list[str]]:
     return applied, flags
 
 
+def locate(target_path, suite, env) -> Path:
+    """The benchmark binary: the suite's name inside the target's build directory."""
+    binary = Path(target_path) / suite
+    if not (binary.is_file() and os.access(binary, os.X_OK)):
+        raise Unsupported(f"suite binary not found: {binary}")
+    return binary
+
+
+def attempted(applied: dict) -> int:
+    """The repetitions asked for; protocol() already allows only one level."""
+    return applied["repetitions"]["levels"][0]["n"]
+
+
+def harness(info: dict) -> dict:
+    """comparison_context.harness, from the provenance info context_facts gave."""
+    out = {"name": NAME}
+    if info.get("library_version"):
+        out["version"] = info["library_version"]
+    return out
+
+
 def list_cases(binary, case_filter, env) -> list[str]:
     """The planned set, fixed before running (harness-adapter.md §5 step 5)."""
     args = [str(binary), "--benchmark_list_tests=true"]
@@ -78,7 +102,7 @@ def list_cases(binary, case_filter, env) -> list[str]:
     return [line.strip() for line in out.stdout.splitlines() if line.strip()]
 
 
-def run_case(binary, case, flags, env, timeout, native_path) -> dict:
+def run_case(binary, case, flags, env, timeout, native_path, env_names=()) -> dict:
     """Run one case; never raises for harness failures, which become results."""
     args = [str(binary), f"--benchmark_filter=^{re.escape(case)}$",
             f"--benchmark_out={native_path}", "--benchmark_out_format=json", *flags]

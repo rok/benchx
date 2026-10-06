@@ -48,6 +48,8 @@ _REGISTRY = Registry().with_resources(
 )
 _RESULT_VALIDATOR = jsonschema.Draft202012Validator(RESULT_SCHEMA, registry=_REGISTRY)
 _ORDER_VALIDATOR = jsonschema.Draft202012Validator(ORDER_SCHEMA, registry=_REGISTRY)
+_PRECISION_VALIDATOR = jsonschema.Draft202012Validator(
+    {"$ref": ORDER_SCHEMA["$id"] + "#/properties/precision"}, registry=_REGISTRY)
 _DESCRIPTION_VALIDATOR = jsonschema.Draft202012Validator(DESCRIPTION_SCHEMA, registry=_REGISTRY)
 _REQUEST_VALIDATOR = jsonschema.Draft202012Validator(REQUEST_SCHEMA, registry=_REGISTRY)
 
@@ -120,6 +122,10 @@ def validate_result(document: dict) -> None:
 
 def validate_order(order: dict) -> None:
     _validate(_ORDER_VALIDATOR, order, "work order")
+
+
+def validate_precision(precision: dict) -> None:
+    _validate(_PRECISION_VALIDATOR, precision, "precision")
 
 
 def validate_description(description: dict) -> None:

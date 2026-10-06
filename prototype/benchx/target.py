@@ -47,6 +47,17 @@ def text(description: dict | None) -> dict:
     return out
 
 
+def find_upward(relative, start="."):
+    """The nearest file `relative` (e.g. `.benchx/config.json`) walking up from
+    `start`, or None."""
+    start = Path(start).resolve()
+    for directory in (start, *start.parents):
+        path = directory / relative
+        if path.is_file():
+            return path
+    return None
+
+
 def find_provider(start="."):
     """The provider command from the nearest `.benchx/provider.json`, walking
     up from `start`. Returns (command, directory it is run in), or None."""

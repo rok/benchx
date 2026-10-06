@@ -10,9 +10,9 @@ import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import __version__, core, snapshot
+from . import __version__, adapters, core, snapshot
 from . import target as target_mod
-from .adapters import gbench
+from .adapters.base import Unsupported
 
 RUNNER = {"name": "benchx-prototype", "version": __version__}
 
@@ -68,25 +68,26 @@ def check(order: dict) -> None:
     if len(order["suites"]) != 1:
         raise Refused("exactly one suite per order is supported")
     suite = order["suites"][0]
-    if suite["adapter"] != "google-benchmark":
+    adapter = adapters.get(suite["adapter"])
+    if adapter is None:
         raise Refused(f"no adapter for {suite['adapter']!r}")
-    if order["target"]["kind"] != "build":
-        raise Refused(f"only build targets are supported; {order['target']['kind']!r} is deferred")
+    if order["target"]["kind"] not in ("build", "working_tree"):
+        raise Refused(f"only build and working_tree targets are supported; {order['target']['kind']!r} is deferred")
     if "benchmark" in order:
         raise Refused("only benchmarks in the subject's own checkout are supported")
     if "include" in suite or "exclude" in suite:
         raise Refused("only a single suites[].filter is supported, not include/exclude")
-    if "workload_parameters" in order:
-        raise Refused("google-benchmark takes no workload_parameters")
-    unknown = set(order["quantities"]) - set(gbench.QUANTITIES)
+    if "workload_parameters" in order and not adapter.WORKLOAD_PARAMETERS:
+        raise Refused(f"{adapter.NAME} takes no workload_parameters")
+    unknown = set(order["quantities"]) - set(adapter.QUANTITIES)
     if unknown:
         raise Refused(f"quantities not supported: {sorted(unknown)}")
     for field, what in DEFERRED.items():
         if field in order:
             raise Refused(f"{field} is deferred in the prototype: {what}")
     try:
-        gbench.protocol(order["precision"])
-    except gbench.Unsupported as e:
+        adapter.protocol(order["precision"])
+    except Unsupported as e:
         raise Refused(str(e)) from None
 
 
@@ -97,23 +98,32 @@ def run(order_path, out_dir) -> dict:
         check(order)
     except core.DocumentError as e:
         raise Refused(e.message) from None
-    applied_protocol, flags = gbench.protocol(order["precision"])
+    adapter = adapters.get(order["suites"][0]["adapter"])
+    applied_protocol, invocation = adapter.protocol(order["precision"])
 
-    build_dir = Path(order["target"]["path"])
-    binary = build_dir / order["suites"][0]["suite"]
-    if not (binary.is_file() and os.access(binary, os.X_OK)):
-        raise Refused(f"suite binary not found: {binary}")
-    source_dir = order["target"].get("source_dir") or snapshot.cmake_source_dir(build_dir)
-    source = snapshot.git_identity(source_dir) if source_dir else None
+    target_path = Path(order["target"]["path"]).expanduser()
+    child_env = {**os.environ, **order.get("environment_variables", {})}
+    try:
+        runnable = adapter.locate(target_path, order["suites"][0]["suite"], child_env)
+    except Unsupported as e:
+        raise Refused(str(e)) from None
+    if order["target"]["kind"] == "working_tree":
+        # The tree is the code: inspect it as found, dirty or not, never clean or check it out.
+        source_dir = order["target"].get("source_dir") or target_path
+        source = snapshot.git_identity(source_dir) or snapshot.directory_identity(source_dir)
+        configuration = {}
+    else:
+        source_dir = order["target"].get("source_dir") or snapshot.cmake_source_dir(target_path)
+        source = snapshot.git_identity(source_dir) if source_dir else None
+        configuration = snapshot.cmake_configuration(target_path)
     if source is None:
         # runner.md §2: a result that cannot state its revision is a defect.
         raise Refused("cannot locate the checkout the target was built from; set target.source_dir")
 
-    child_env = {**os.environ, **order.get("environment_variables", {})}
     parameters = dict(order.get("environment_variables", {}))
     environment = snapshot.environment()
-    observed = snapshot.observed_context(child_env)
-    configuration = snapshot.cmake_configuration(build_dir)
+    env_names = snapshot.env_allowlist(child_env, getattr(adapter, "ENV_ALLOWLIST", ()))
+    observed = snapshot.observed_context(child_env, env_names)
     # Declared by the user, recorded as given, never executed or checked (runner-schema.md §3.1).
     declared_text = target_mod.text(order["target"])
     if "provider" in declared_text:
@@ -130,32 +140,43 @@ def run(order_path, out_dir) -> dict:
     order_file = out_dir / f"workorder-{ref[7:]}.json"
     order_file.write_bytes(core.canonical(order))
 
-    attempted = applied_protocol["repetitions"]["levels"][0]["n"]
-    cases = gbench.list_cases(binary, order["suites"][0].get("filter"), child_env)
+    attempted = adapter.attempted(applied_protocol)
+    try:
+        cases = adapter.list_cases(runnable, order["suites"][0].get("filter"), child_env)
+    except Unsupported as e:
+        raise Refused(str(e)) from None
     written = []
     for index, case in enumerate(cases):
         stem = f"{index:04d}"
         native_path = artifacts_dir / f"{stem}.native.json"
-        run_ = gbench.run_case(binary, case, flags, child_env, order["timeouts"]["case_s"], native_path)
+        run_ = adapter.run_case(runnable, case, invocation, child_env, order["timeouts"]["case_s"], native_path,
+                              env_names=env_names)
         (artifacts_dir / f"{stem}.stdout").write_text(run_["stdout"])
         (artifacts_dir / f"{stem}.stderr").write_text(run_["stderr"])
         artifacts = [_artifact("stdout", "text/plain", artifacts_dir / f"{stem}.stdout"),
                      _artifact("stderr", "text/plain", artifacts_dir / f"{stem}.stderr")]
         if native_path.exists():
             artifacts.insert(0, _artifact("native-output", "application/json", native_path))
-        native_observed, native_info = gbench.context_facts(run_["native"])
+        artifacts += [_artifact(kind, media_type, path) for kind, media_type, path in run_.get("artifacts", [])]
+        native_observed, native_info = adapter.context_facts(run_["native"])
+        case_observed, case_warnings = observed, []
+        if hasattr(adapter, "observed_environment"):
+            facts, case_warnings = adapter.observed_environment(run_, case, env_names)
+            case_observed = {k: v for k, v in {**observed, **facts}.items() if v is not None}
         attempt_key = f"urn:benchx:attempt:{ref[7:23]}:{index}"
 
-        for output in gbench.translate(case, order["quantities"], run_, attempted):
+        for output in adapter.translate(case, order["quantities"], run_, attempted):
             procedure = dict(output["procedure"], duration_seconds=round(run_["ended"] - run_["started"], 6))
             if round_ is not None:
                 procedure["round"] = round_
             if slot is not None:
                 procedure["slot"] = slot
             procedure["timeout_seconds"] = order["timeouts"]["case_s"]
+            if hasattr(adapter, "repetition_levels"):
+                procedure["repetition_levels"] = adapter.repetition_levels(applied_protocol, run_, case)
             info = {"workorder_ref": ref, "requester": order["requester"], **output["info"]}
             if native_info:
-                info["google_benchmark"] = native_info
+                info[adapter.CONTEXT_KEY] = native_info
             if "reason" in order:
                 info["reason"] = order["reason"]
             info.update(declared_text)
@@ -179,33 +200,37 @@ def run(order_path, out_dir) -> dict:
             subject = {"name": _subject_name(order), "components": [{"role": "primary"}]}
             if configuration:
                 subject["configuration"] = configuration
-            harness = {"name": "google-benchmark"}
-            if native_info.get("library_version"):
-                harness["version"] = native_info["library_version"]
+            harness = adapter.harness(native_info)
             key = ingest_key(order["run_key"], case, parameters, output["quantity"]["name"], slot)
             document = {
                 "schema_version": 5,
-                "producer": gbench.PRODUCER,
+                "producer": adapter.PRODUCER,
                 "ingest_key": key,
                 "attempt_key": attempt_key,
                 **({"project": order["project"]} if "project" in order else {}),
                 "source": order["target"]["source"],
                 "revision": {"key": source["revision"]},
-                "benchmark": {"source": order["target"]["source"], "revision": {"key": source["revision"]}},
+                "benchmark": {"source": order["target"]["source"],
+                              # An unversioned tree is identified by its hash in provenance, not by a revision.
+                              **({} if source["revision"].startswith("directory-")
+                                 else {"revision": {"key": source["revision"]}})},
                 "coordinates": {
                     "workload": workload,
                     "subject": subject,
                     "quantity": output["quantity"],
-                    "comparison_context": {"harness": harness, "protocol": applied_protocol},
+                    "comparison_context": {"harness": harness, "protocol": applied_protocol,
+                                           **(adapter.comparison_extras(native_info)
+                                              if hasattr(adapter, "comparison_extras") else {})},
                     "environment": environment,
                 },
                 "measurement": output["measurement"],
-                "observed_context": {**observed, **({"google_benchmark": native_observed} if native_observed else {})},
+                "observed_context": {**case_observed, **({adapter.CONTEXT_KEY: native_observed} if native_observed else {})},
                 "procedure": procedure,
                 "provenance": provenance,
             }
-            if setup_warning:
-                document["quality"] = {"warnings": [setup_warning]}
+            warnings = ([setup_warning] if setup_warning else []) + case_warnings
+            if warnings:
+                document["quality"] = {"warnings": warnings}
             try:
                 core.validate_result(document)
             except core.DocumentError as e:
@@ -213,7 +238,7 @@ def run(order_path, out_dir) -> dict:
                 document["measurement"] = {"status": "error", "reason": "adapter.mapping-failed"}
                 document["provenance"]["info"]["mapping_error"] = e.message
                 document["procedure"] = {k: v for k, v in procedure.items()
-                                         if k not in ("inner_iterations", "completed_repetitions")}
+                                         if k not in ("inner_iterations", "completed_repetitions", "repetition_levels")}
                 core.validate_result(document)
             path = out_dir / file_name(key)
             path.write_bytes(core.canonical(document))
