@@ -36,6 +36,8 @@ allow all of them.
 
 - `docs/design/benchmark-result-schema.md` — the benchmark result schema and
   migration contract (the core design document).
+- `docs/design/measurement-result-parquet.md` — how a result is stored in
+  Parquet, with a small PyArrow example in `tools/json_to_parquet.py`.
 - `docs/user_stories/` — user story template and collected stories.
 
 ## Status
