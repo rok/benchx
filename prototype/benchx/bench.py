@@ -67,7 +67,7 @@ def build_order(module, functions, *, tree=None, precision_flags=None, environme
         entry["filter"] = case_filter(functions)
     run_key = run_key or "bench-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     order = {
-        "schema_version": "benchx/work-order/0.1.0",
+        "schema_version": core.catalog.WORK_ORDER,
         "work_order_id": f"urn:uuid:{uuid.uuid4()}",
         "state": "resolved",
         "suites": [entry],
@@ -97,7 +97,7 @@ def summarize(files) -> list[dict]:
     rows = []
     for path in files:
         document = json.loads(Path(path).read_text(encoding="utf-8"))
-        if document.get("schema_version") == "benchx/work-order/0.1.0":
+        if document.get("schema_version") == core.catalog.WORK_ORDER:
             continue
         measurement = document["measurement"]
         values = [o["value"] for o in measurement.get("observations", [])]

@@ -24,7 +24,7 @@ def result(side, round_, slot, value, workload="BM_W", **changes):
             "subject": {"name": "demo", "components": [{"role": "primary"}], "configuration": {"build_type": "Release"}},
             "quantity": {"name": "wall-time", "unit": "s", "direction": "lower-is-better"},
             "comparison_context": {"harness": {"name": "google-benchmark"}},
-            "environment": {"schema": "machine/v1", "identity": {"runner": "host"}},
+            "environment": {"schema_version": "machine/v1", "identity": {"runner": "host"}},
         },
         "measurement": {"status": "success", "observations": [value]},
         "observed_context": {"kernel": "6.8"},

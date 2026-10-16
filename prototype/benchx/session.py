@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import compare as compare_mod
 from . import runner, snapshot, target as target_mod
+from .core import catalog
 from .identity import normalize_remote
 
 PROFILES = ("revisions", "environments")
@@ -104,7 +105,7 @@ def _order(side: dict, *, suite, filter, quantity, repetitions, min_time, projec
     if filter:
         entry["filter"] = filter
     order = {
-        "schema_version": "benchx/work-order/0.1.0",
+        "schema_version": catalog.WORK_ORDER,
         "work_order_id": f"urn:uuid:{uuid.uuid4()}",
         "state": "resolved",
         "suites": [entry],

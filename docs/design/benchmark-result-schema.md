@@ -280,7 +280,7 @@ Absence of a row means the variant was not reported. Telling a lost result from 
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": "benchx/measurement-result/0.1.0",
   "producer": {"name": "example.org/benchmark-adapter", "version": "4.0", "mapping_version": "native-to-benchx/v5"},
   "ingest_key": "ci-1234:parquet-read/snappy:wall-time",
   "attempt_key": "ci.example.org/runs/ci-1234/attempts/parquet-read-snappy-1",
@@ -311,7 +311,7 @@ Absence of a row means the variant was not reported. Telling a lost result from 
       }
     },
     "environment": {
-      "schema": "machine/v1",
+      "schema_version": "machine/v1",
       "identity": {"runner": "bench-01", "cpu": "AMD EPYC 7R13", "cores": 8}
     }
   },
@@ -372,7 +372,7 @@ A thin local message (§4.1) from a contributor's laptop omits `project` and `be
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": "benchx/measurement-result/0.1.0",
   "producer": {"name": "example.org/benchx-cli", "version": "0.1.0", "mapping_version": "timeit-to-benchx/v1"},
   "ingest_key": "session-7f3a:truncate/role=variant:round-1:wall-time",
   "attempt_key": "urn:uuid:7c9e6679-7425-40de-944b-e07fc1f90ae7",
@@ -400,7 +400,7 @@ A thin local message (§4.1) from a contributor's laptop omits `project` and `be
         "schedule": {"unit": "attempt", "rule": "alternating", "rounds": 5}
       }
     },
-    "environment": {"schema": "local/v1", "identity": {"hostname": "rok-laptop"}}
+    "environment": {"schema_version": "local/v1", "identity": {"hostname": "rok-laptop"}}
   },
   "measurement": {
     "status": "success",
