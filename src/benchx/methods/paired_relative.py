@@ -5,6 +5,7 @@ import logging
 import math
 import statistics
 
+from .. import config
 from ..evidence import NOT_COMPARABLE, Assessment, Method, change_label
 from ..projection import workload_label
 
@@ -78,7 +79,7 @@ class PairedRelative(Method):
     version = "v2"
     dims = ("round", "side")
     requires = ("equal-attempts", "alternating-slots", "duplicate-points")
-    defaults = {"k": 3.0, "min_rounds": 4}
+    defaults = {"k": config.DEFAULTS["compare.k"], "min_rounds": config.DEFAULTS["compare.min_rounds"]}
     config_schema = {
         "type": "object",
         "additionalProperties": False,

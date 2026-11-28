@@ -23,7 +23,7 @@ import os
 import time
 from pathlib import Path
 
-from . import adapters, harnesses, orders, runner, snapshot
+from . import adapters, config, harnesses, orders, runner, snapshot
 from . import compare as compare_mod
 from . import target as target_mod
 from .adapters import benchx_params
@@ -34,7 +34,7 @@ from .identity import normalize_remote
 PROFILES = tuple(compare_mod.PROFILES)
 # Rounds when neither --rounds nor compare.rounds says: even, so an order that alternates
 # AB, BA, ... balances, and enough that the k = 3 threshold rarely flags a no-op change (#126).
-ROUNDS = 6
+ROUNDS = config.DEFAULTS["compare.rounds"]
 
 
 def parse_target(text: str) -> tuple[str, str | None]:
@@ -514,8 +514,8 @@ def compare_targets(
     run_key=None,
     out=None,
     source_uri=None,
-    k=3.0,
-    min_rounds=4,
+    k=config.DEFAULTS["compare.k"],
+    min_rounds=config.DEFAULTS["compare.min_rounds"],
     progress=None,
     build=True,
     provider=None,
@@ -729,8 +729,8 @@ def compare_variants(
     run_key=None,
     out=None,
     source_uri=None,
-    k=3.0,
-    min_rounds=4,
+    k=config.DEFAULTS["compare.k"],
+    min_rounds=config.DEFAULTS["compare.min_rounds"],
     progress=None,
     build=True,
     provider=None,

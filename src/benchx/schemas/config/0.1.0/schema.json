@@ -42,13 +42,14 @@
           "type": "string",
           "minLength": 1
         },
-        "verbosity": { "description": "How much the harness itself is asked to say: 0 (the default), or more (pyperf and asv: --verbose; Google Benchmark: --v=N). The same as --harness-verbosity.", "type": "integer", "minimum": 0 },
+        "verbosity": { "description": "How much the harness itself is asked to say: 0 (the default), or more (pyperf and asv: --verbose; Google Benchmark: --v=N). The same as --harness-verbosity.", "type": "integer", "minimum": 0, "default": 0 },
         "quantities": {
           "description": "What one run collects, from those the harness reports.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "minLength": 1 },
+          "default": ["wall-time"]
         },
         "precision": { "description": "A work-order precision, possibly partial.", "type": "object" }
       }
@@ -72,22 +73,23 @@
     "environment_variables": {
       "description": "Set for the benchmark's processes; each becomes a workload parameter.",
       "type": "object",
-      "additionalProperties": { "type": "string" }
+      "additionalProperties": { "type": "string" },
+      "default": {}
     },
     "timeouts": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "case_s": { "type": "number", "exclusiveMinimum": 0 },
-        "order_s": { "type": "number", "exclusiveMinimum": 0 }
+        "case_s": { "type": "number", "exclusiveMinimum": 0, "default": 60 },
+        "order_s": { "type": "number", "exclusiveMinimum": 0, "default": 600 }
       }
     },
     "paths": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "store": { "description": "The local store (default store.parquet when pyarrow is installed, else store.jsonl).", "type": "string", "minLength": 1 },
-        "results": { "description": "Where result files are written (default results).", "type": "string", "minLength": 1 }
+        "store": { "description": "The local store (default store.parquet when pyarrow is installed, else store.jsonl).", "type": "string", "minLength": 1, "default": "store.parquet" },
+        "results": { "description": "Where result files are written (default results).", "type": "string", "minLength": 1, "default": "results" }
       }
     },
     "compare": {
@@ -95,9 +97,9 @@
       "additionalProperties": false,
       "properties": {
         "profile": { "enum": ["revisions", "environments", "variants"] },
-        "rounds": { "type": "integer", "minimum": 1 },
-        "k": { "type": "number", "exclusiveMinimum": 0, "maximum": 20 },
-        "min_rounds": { "type": "integer", "minimum": 1 }
+        "rounds": { "type": "integer", "minimum": 1, "default": 6 },
+        "k": { "type": "number", "exclusiveMinimum": 0, "maximum": 20, "default": 3.0 },
+        "min_rounds": { "type": "integer", "minimum": 1, "default": 4 }
       }
     },
     "logging": {
@@ -105,11 +107,13 @@
       "oneOf": [
         { "type": "boolean" },
         { "type": "string", "minLength": 1, "not": { "pattern": "\\.json$" } }
-      ]
+      ],
+      "default": "{out}/bx.log"
     },
     "log_level": {
       "description": "Level of what the log keeps: debug (the default), info, warning or error.",
-      "enum": ["debug", "info", "warning", "error"]
+      "enum": ["debug", "info", "warning", "error"],
+      "default": "debug"
     }
   }
 }

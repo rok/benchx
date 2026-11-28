@@ -22,8 +22,10 @@ import importlib.util
 import json
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from . import adapters, core
 from .core import loader
@@ -34,9 +36,33 @@ CONFIG_FILE = "benchx.conf.json"
 # no setting silently stops applying.
 LEGACY_FILES = (Path(".benchx") / "provider.json", Path(".benchx") / "config.json")
 HOME_ENV = "BENCHX_HOME"
-DEFAULT_STORE = "store.parquet"
 DEFAULT_JSON_STORE = "store.jsonl"
-DEFAULT_RESULTS = "results"
+
+
+def _load_schema_defaults() -> Mapping[str, object]:
+    """Load built-in workbench defaults from `schemas/config/0.1.0/schema.json` by exact dotted key.
+    Harness-specific precision defaults live on each harness (`benchx.adapters.*` / `benchx.harnesses`)."""
+    schema_path = Path(__file__).parent / "schemas" / "config" / "0.1.0" / "schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    found: dict[str, object] = {}
+
+    def walk(properties: dict, prefix: str = "") -> None:
+        for name, spec in properties.items():
+            key = f"{prefix}{name}"
+            if "default" in spec:
+                value = spec["default"]
+                found[key] = tuple(value) if isinstance(value, list) else value
+            if "properties" in spec:
+                walk(spec["properties"], f"{key}.")
+
+    walk(schema["properties"])
+    return MappingProxyType(found)
+
+
+DEFAULTS = _load_schema_defaults()
+DEFAULT_STORE = DEFAULTS["paths.store"]
+DEFAULT_RESULTS = DEFAULTS["paths.results"]
+_UNSET = object()
 REQUIRED = object()
 
 
@@ -87,28 +113,36 @@ class Config:
     def section(self, name) -> dict:
         return self.data.get(name, {})
 
+    def get(self, dotted_key: str, default=None):
+        """Look up a dotted key (e.g. `'compare.k'`) in `self.data`, returning `default` if absent."""
+        node = self.data
+        for part in dotted_key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return default
+            node = node[part]
+        return node
+
     @property
     def adapter(self) -> dict:
         return self.section("adapter")
 
-    def pick_with_source(self, flag_value, file_value, default=REQUIRED, *, flag, key, env=None):
-        """The value and where it came from: the command line (`flag`), else the environment
-        variable named `env` (`env`; an empty one counts as unset), else the file's (`file`),
-        else `default` (`default`); ConfigError when none is given and the value is required."""
+    def pick_with_source(self, key: str, flag_value=None, *, flag: str, default=_UNSET, env: str | None = None):
+        """Resolve `key` from CLI (`flag`), `env`, the config file (`self.get(key)`), or `DEFAULTS.get(key)`
+        (overridable via `default`); raises ConfigError when required and unset."""
         if flag_value is not None:
             return flag_value, "flag"
         if env and (from_env := os.environ.get(env)):
             return from_env, "env"
-        if file_value is not None:
+        if (file_value := self.get(key)) is not None:
             return file_value, "file"
-        if default is REQUIRED:
+        resolved_default = DEFAULTS.get(key, REQUIRED) if default is _UNSET else default
+        if resolved_default is REQUIRED:
             raise ConfigError(f"{flag} is required: give it, or set {key} in {self.where}")
-        return default, "default"
+        return resolved_default, "default"
 
-    def pick(self, flag_value, file_value, default=REQUIRED, *, flag, key, env=None):
-        """The command-line value, else the file's, else `default`; ConfigError when
-        none is given and the value is required."""
-        return self.pick_with_source(flag_value, file_value, default, flag=flag, key=key, env=env)[0]
+    def pick(self, key: str, flag_value=None, *, flag: str, default=_UNSET, env: str | None = None):
+        """Resolve `key` (flag > env > file > default); ConfigError when required and unset."""
+        return self.pick_with_source(key, flag_value, flag=flag, default=default, env=env)[0]
 
     def _path(self, value) -> Path:
         path = Path(value).expanduser()
@@ -228,7 +262,11 @@ def template(adapter_name="pyperf") -> dict:
         raise ConfigError(f"no adapter named {adapter_name!r} ({', '.join(sorted(adapters.ADAPTERS))})")
     return {
         "schema_version": "benchx/config/0.1.0",
-        "adapter": {"name": adapter_name, "quantities": ["wall-time"], "precision": adapter.default_precision()},
+        "adapter": {
+            "name": adapter_name,
+            "quantities": list(DEFAULTS["adapter.quantities"]),
+            "precision": adapter.default_precision(),
+        },
     }
 
 

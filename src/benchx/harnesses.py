@@ -47,6 +47,7 @@ class Harness:
     FLAGS: tuple[str, ...] = ()
     BARE_PATH_KIND: str
     NAMES_TAKE_ARGUMENTS = False
+    DEFAULT_CASE_TIMEOUT_S: float = config.DEFAULTS["timeouts.case_s"]
 
     def suite_entry(self, suite: str, filter: str | None = None) -> dict:
         entry = {"adapter": self.name, "suite": suite}
@@ -111,6 +112,8 @@ class Pyperf(Harness):
     FLAGS = ("processes", "values", "min_time", "loops", "warmups")
     BARE_PATH_KIND = "working_tree"  # the module is run as found; the path is its own source
     NAMES_TAKE_ARGUMENTS = True  # a function with params is one case per combination
+    DEFAULT_PROCESSES: int = adapters.pyperf.DEFAULTS["processes"]
+    DEFAULT_VALUES: int = adapters.pyperf.DEFAULTS["values"]
 
     def _precision_from(self, processes=None, values=None, min_time=None, loops=None, warmups=None) -> dict:
         if min_time is not None and loops is not None:
@@ -141,6 +144,8 @@ class Asv(Pyperf):
 
     name = "asv"
     BARE_PATH_KIND = "working_tree"  # the suite is run as found, against the installed project
+    # An asv case is every round of its benchmark, each bounded by the benchmark's own timeout.
+    DEFAULT_CASE_TIMEOUT_S: float = 1800
 
     def describe_precision(self, precision, config_path=None):
         reps = {level["unit"]: level["n"] for level in precision["repetitions"]["levels"]}

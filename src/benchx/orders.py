@@ -9,12 +9,13 @@ every order is checked against its schema before anything runs it.
 import uuid
 from datetime import UTC, datetime
 
-from . import core
+from . import config, core
 from .errors import BenchxError
 
 SCHEMA_VERSION = core.catalog.WORK_ORDER
 REQUESTER = {"kind": "workbench", "name": "bx"}
-CASE_TIMEOUT_S, ORDER_TIMEOUT_S = 60, 600
+CASE_TIMEOUT_S = config.DEFAULTS["timeouts.case_s"]
+ORDER_TIMEOUT_S = config.DEFAULTS["timeouts.order_s"]
 
 
 class OrderError(BenchxError):

@@ -32,11 +32,9 @@ from .results import MemoryStore, warning_codes
 EXIT_OK = 0
 EXIT_INVALID = 1  # a document invalid, a result rejected, or a target without a description
 EXIT_REFUSED = 2  # the command was refused or could not be carried out
-ASV_CASE_TIMEOUT_S = 1800
 VERBOSE_ENV = "BENCHX_VERBOSE"
 LOG_LEVEL_ENV = "BENCHX_LOG_LEVEL"
 HARNESS_VERBOSITY_ENV = "BENCHX_HARNESS_VERBOSITY"
-DEFAULT_LOG = "{out}/bx.log"
 # benchx's own control variables: every one the code reads. They are settings someone typed for benchx, a fixed
 # list, so the log gives their values; the rest of the inherited environment is never dumped.
 CONTROL_ENV = (
@@ -106,12 +104,7 @@ def _harness_verbosity(cfg, args) -> tuple[int, str]:
     if given is None and extra and from_flag:
         given, label = extra, "flag: -v past -vv"
     value, source = cfg.pick_with_source(
-        given,
-        cfg.adapter.get("verbosity"),
-        0,
-        flag="--harness-verbosity",
-        key="adapter.verbosity",
-        env=HARNESS_VERBOSITY_ENV,
+        "adapter.verbosity", given, flag="--harness-verbosity", env=HARNESS_VERBOSITY_ENV
     )
     if source == "env":
         try:
@@ -128,9 +121,7 @@ def _harness_verbosity(cfg, args) -> tuple[int, str]:
 def _log_level(cfg, args) -> tuple[int, str]:
     """The level the log keeps, and where it came from: the flag, $BENCHX_LOG_LEVEL, the file's
     `log_level`, else debug."""
-    value, source = cfg.pick_with_source(
-        args.log_level, cfg.data.get("log_level"), "debug", flag="--log-level", key="log_level", env=LOG_LEVEL_ENV
-    )
+    value, source = cfg.pick_with_source("log_level", args.log_level, flag="--log-level", env=LOG_LEVEL_ENV)
     if value.lower() not in log.LEVELS:
         origin = f"{LOG_LEVEL_ENV}={value}" if source == "env" else f"log_level in {cfg.path}"
         raise UsageError(f"{origin}: not one of {', '.join(log.LEVELS)}")
@@ -141,7 +132,7 @@ def _log_setting(cfg, args, out, command):
     """What the switch says for this command, and where that came from: False (off), True
     (stderr) or the resolved log file. A command with no output folder (`out` None) logs only
     when a flag asks: the file, the environment and the default are ignored."""
-    setting, source = cfg.pick_with_source(args.log, cfg.data.get("logging"), DEFAULT_LOG, flag="--log", key="logging")
+    setting, source = cfg.pick_with_source("logging", args.log, flag="--log")
     if out is None and source != "flag":
         return False, source
     if isinstance(setting, str):
@@ -435,7 +426,11 @@ def _common(cfg, args, *, forced_adapter=None, forced_suite=None) -> dict:
             "(pyperf and asv)"
         )
     sources = []
-    quantities = config_mod.parse_quantities(args.quantity) if args.quantity else block.get("quantities", ["wall-time"])
+    quantities = (
+        config_mod.parse_quantities(args.quantity)
+        if args.quantity
+        else list(block.get("quantities", config_mod.DEFAULTS["adapter.quantities"]))
+    )
     sources.append(
         (
             "quantities",
@@ -446,14 +441,12 @@ def _common(cfg, args, *, forced_adapter=None, forced_suite=None) -> dict:
     if args.project and args.no_project:
         raise UsageError("give --project or --no-project, not both")
     timeouts = cfg.section("timeouts")
-    adapter, adapter_source = cfg.pick_with_source(given, block.get("name"), flag="--adapter", key="adapter.name")
+    adapter, adapter_source = cfg.pick_with_source("adapter.name", given, flag="--adapter")
     named = block.get("name")
     if given and named and given != named:  # the file's block serves another adapter of its family
         adapter_source += f"; the file says {named}, same family"
     sources.append(("adapter", adapter, adapter_source))
-    suite, suite_source = cfg.pick_with_source(
-        forced_suite or args.suite, block.get("suite"), flag="--suite", key="adapter.suite"
-    )
+    suite, suite_source = cfg.pick_with_source("adapter.suite", forced_suite or args.suite, flag="--suite")
     sources.append(("suite", suite, suite_source))
     from_flag, from_file = _environment(args.env), cfg.section("environment_variables")
     environment_variables = {**from_file, **from_flag}
@@ -468,25 +461,22 @@ def _common(cfg, args, *, forced_adapter=None, forced_suite=None) -> dict:
         project = None
         sources.append(("project", "none: results are filed as local/HOST", "flag --no-project"))
     else:
-        project, project_source = cfg.pick_with_source(
-            args.project, cfg.data.get("project"), None, flag="--project", key="project"
-        )
+        project, project_source = cfg.pick_with_source("project", args.project, flag="--project", default=None)
         sources.append(("project", project or "none: results are filed as local/HOST", project_source))
     source_uri, uri_source = cfg.pick_with_source(
-        args.source_uri or None, cfg.section("source").get("uri"), None, flag="--source-uri", key="source.uri"
+        "source.uri", args.source_uri or None, flag="--source-uri", default=None
     )
     sources.append(("source.uri", source_uri or "the checkout's origin remote", uri_source))
     case_s, case_source = cfg.pick_with_source(
+        "timeouts.case_s",
         getattr(args, "case_timeout", None),
-        timeouts.get("case_s"),
-        ASV_CASE_TIMEOUT_S if adapter == "asv" else orders.CASE_TIMEOUT_S,
         flag="--case-timeout",
-        key="timeouts.case_s",
+        default=harnesses.get(adapter).DEFAULT_CASE_TIMEOUT_S,
     )
     if case_source == "default":
         case_source = "default for asv, which times every round of a benchmark" if adapter == "asv" else "default"
     sources.append(("timeouts.case_s", f"{case_s:g} s", case_source))
-    order_s = timeouts.get("order_s", orders.ORDER_TIMEOUT_S)
+    order_s = timeouts.get("order_s", config_mod.DEFAULTS["timeouts.order_s"])
     sources.append(("timeouts.order_s", f"{order_s:g} s", "file" if "order_s" in timeouts else "default"))
     flagged = [name for name in harnesses.FLAG_NAMES if getattr(args, name) is not None]
     precision_file = sorted(block.get("precision") or {})
@@ -615,7 +605,7 @@ def _no_config() -> config_mod.Config:
 def _logging_rows(cfg, args):
     """What `bx config show` adds for the log: the switch, the level and the verbosity, each with
     where it came from (a flag, an environment variable, the file or the default)."""
-    setting, source = cfg.pick_with_source(args.log, cfg.data.get("logging"), DEFAULT_LOG, flag="--log", key="logging")
+    setting, source = cfg.pick_with_source("logging", args.log, flag="--log")
     if isinstance(setting, str):
         setting = setting.replace("{root}", str(cfg.root))
     if isinstance(setting, str) and "{out}" not in setting:
@@ -630,30 +620,33 @@ def _logging_rows(cfg, args):
     yield "harness verbosity", str(harness), harness_source
 
 
-def _resolved(cfg):
-    """What the file and the built-in defaults give, before any command-line argument:
-    (key, value, 'file' | 'default' | 'unset')."""
+def _config_row(cfg: config_mod.Config, key: str, default=None) -> tuple[str, str, str]:
+    value = cfg.get(key)
+    if value is not None:
+        return key, json.dumps(value), "file"
+    if default is None:
+        default = config_mod.DEFAULTS.get(key)
+    if default is not None:
+        return key, json.dumps(default), "default"
+    return key, "-", "unset"
 
-    def row(key, value, default=None):
-        if value is not None:
-            return key, json.dumps(value), "file"
-        return key, json.dumps(default) if default is not None else "-", "default" if default is not None else "unset"
 
-    block, timeouts, compare = cfg.adapter, cfg.section("timeouts"), cfg.section("compare")
-    yield row("project", cfg.data.get("project"))
-    yield row("source.uri", cfg.section("source").get("uri"))
-    yield row("provider.command", cfg.section("provider").get("command"))
-    yield row("adapter.name", block.get("name"))
-    yield row("adapter.suite", block.get("suite"))
-    yield row("adapter.quantities", block.get("quantities"), ["wall-time"])
-    if block.get("name"):
-        resolved = harnesses.get(block["name"]).precision({}, block.get("precision"))
-        yield "adapter.precision", json.dumps(resolved), "file + default" if block.get("precision") else "default"
-    yield row("environment_variables", cfg.data.get("environment_variables"), {})
-    yield row("timeouts.case_s", timeouts.get("case_s"), orders.CASE_TIMEOUT_S)
-    yield row("timeouts.order_s", timeouts.get("order_s"), orders.ORDER_TIMEOUT_S)
+def _resolved(cfg: config_mod.Config):
+    """Yield `(key, formatted_value, source)` for each config key before CLI overrides."""
+    for key in ("project", "source.uri", "provider.command", "adapter.name", "adapter.suite", "adapter.quantities"):
+        yield _config_row(cfg, key)
+    adapter_name = cfg.adapter.get("name")
+    if adapter_name:
+        resolved = harnesses.get(adapter_name).precision({}, cfg.adapter.get("precision"))
+        yield "adapter.precision", json.dumps(resolved), "file + default" if cfg.adapter.get("precision") else "default"
+    case_default = (
+        harnesses.get(adapter_name).DEFAULT_CASE_TIMEOUT_S if adapter_name else config_mod.DEFAULTS["timeouts.case_s"]
+    )
+    yield _config_row(cfg, "environment_variables")
+    yield _config_row(cfg, "timeouts.case_s", case_default)
+    yield _config_row(cfg, "timeouts.order_s")
     store_from = (
-        "$BENCHX_HOME"
+        f"${config_mod.HOME_ENV}"
         if os.environ.get(config_mod.HOME_ENV)
         else "file"
         if "store" in cfg.section("paths")
@@ -661,10 +654,8 @@ def _resolved(cfg):
     )
     yield "paths.store", str(cfg.store_path), store_from
     yield "paths.results", str(cfg.results_dir), "file" if "results" in cfg.section("paths") else "default"
-    yield row("compare.profile", compare.get("profile"))
-    yield row("compare.rounds", compare.get("rounds"), session.ROUNDS)
-    yield row("compare.k", compare.get("k"), 3.0)
-    yield row("compare.min_rounds", compare.get("min_rounds"), 4)
+    for key in ("compare.profile", "compare.rounds", "compare.k", "compare.min_rounds"):
+        yield _config_row(cfg, key)
 
 
 def _report(outcome, store_path=None):
@@ -854,24 +845,19 @@ def cmd_compare(args):
 
 
 def _policy(cfg, args) -> tuple[dict, list]:
-    """The comparison's own settings: the command line, else `compare` in the file, else the default;
-    and each with where it came from, for the log."""
-    compare = cfg.section("compare")
-    profile, profile_source = cfg.pick_with_source(
-        args.profile, compare.get("profile"), flag="--profile", key="compare.profile"
-    )
-    k, k_source = cfg.pick_with_source(args.k, compare.get("k"), 3.0, flag="--k", key="compare.k")
-    min_rounds, min_source = cfg.pick_with_source(
-        args.min_rounds, compare.get("min_rounds"), 4, flag="--min-rounds", key="compare.min_rounds"
-    )
-    return (
-        {"profile": profile, "k": k, "min_rounds": min_rounds},
-        [
-            ("compare.profile", profile, profile_source),
-            ("compare.k", k, k_source),
-            ("compare.min_rounds", min_rounds, min_source),
-        ],
-    )
+    """Resolve comparison policy settings (`compare.profile`, `compare.k`, `compare.min_rounds`)
+    from CLI flags, config file, or centralized defaults, along with their sources for logging."""
+    policy, sources = {}, []
+    for field, flag_val, flag in (
+        ("profile", args.profile, "--profile"),
+        ("k", args.k, "--k"),
+        ("min_rounds", args.min_rounds, "--min-rounds"),
+    ):
+        key = f"compare.{field}"
+        value, source = cfg.pick_with_source(key, flag_val, flag=flag)
+        policy[field] = value
+        sources.append((key, value, source))
+    return policy, sources
 
 
 def _profile_flags(args, profile):
@@ -920,9 +906,7 @@ def _measure(cfg, args, policy, sources):
     settings = _common(cfg, args)
     session.check_harness(settings["adapter"], settings["flags"], settings["file_precision"], settings["quantities"])
     _needs_provider(cfg, *args.targets)
-    rounds, rounds_source = cfg.pick_with_source(
-        args.rounds, cfg.section("compare").get("rounds"), session.ROUNDS, flag="--rounds", key="compare.rounds"
-    )
+    rounds, rounds_source = cfg.pick_with_source("compare.rounds", args.rounds, flag="--rounds")
     label = session.parse_label(args.label) if args.label else None
     store = (
         MemoryStore()
@@ -1133,8 +1117,8 @@ def _add_target_options(parser, command):
     parser.add_argument(
         "--quantity",
         metavar="NAMES",
-        help="comma-separated, collected in one run (default: adapter.quantities, else wall-time); "
-        "google-benchmark also reports cpu-time",
+        help=f"comma-separated, collected in one run (default: adapter.quantities, else "
+        f"{', '.join(config_mod.DEFAULTS['adapter.quantities'])}); google-benchmark also reports cpu-time",
     )
     parser.add_argument(
         "-e",
@@ -1148,8 +1132,12 @@ def _add_target_options(parser, command):
         type=int,
         help=f"google-benchmark: repetitions per case (default {harnesses.GOOGLE_BENCHMARK.DEFAULT_REPETITIONS})",
     )
-    parser.add_argument("--processes", type=int, help="pyperf: worker processes (default 20)")
-    parser.add_argument("--values", type=int, help="pyperf: values per process (default 3)")
+    parser.add_argument(
+        "--processes", type=int, help=f"pyperf: worker processes (default {harnesses.PYPERF.DEFAULT_PROCESSES})"
+    )
+    parser.add_argument(
+        "--values", type=int, help=f"pyperf: values per process (default {harnesses.PYPERF.DEFAULT_VALUES})"
+    )
     parser.add_argument("--min-time", type=float, help="adaptive calibration: minimum seconds per sample")
     parser.add_argument("--loops", type=int, help="pyperf: fixed calibration, inner loops per value")
     parser.add_argument("--warmups", type=int, help="pyperf: warmup values per process (0: none)")
@@ -1169,9 +1157,9 @@ def _add_target_options(parser, command):
         "--harness-verbosity",
         type=_non_negative,
         metavar="N",
-        help="ask the harness to say more (default 0: nothing more). pyperf and asv: 1 or more passes "
-        "--verbose; Google Benchmark: N is passed as --v=N. Its output is logged in full. "
-        f"Each -v past -vv does the same (-vvv is 1). ${HARNESS_VERBOSITY_ENV}, adapter.verbosity",
+        help=f"ask the harness to say more (default {config_mod.DEFAULTS['adapter.verbosity']}: nothing more). "
+        "pyperf and asv: 1 or more passes --verbose; Google Benchmark: N is passed as --v=N. Its output is "
+        f"logged in full. Each -v past -vv does the same (-vvv is 1). ${HARNESS_VERBOSITY_ENV}, adapter.verbosity",
     )
     parser.add_argument(
         "--no-build",
@@ -1217,7 +1205,7 @@ def _logging_options() -> argparse.ArgumentParser:
         type=str.lower,
         choices=list(log.LEVELS),
         metavar="LEVEL",
-        help=f"what the log keeps: {', '.join(log.LEVELS)} (default debug; ${LOG_LEVEL_ENV})",
+        help=f"what the log keeps: {', '.join(log.LEVELS)} (default {config_mod.DEFAULTS['log_level']}; ${LOG_LEVEL_ENV})",
     )
     parent.add_argument(
         "-v",
@@ -1293,8 +1281,9 @@ def main(argv=None):
     p.add_argument(
         "--case-timeout",
         type=float,
-        help=f"seconds before one case is stopped (default: timeouts.case_s, else {orders.CASE_TIMEOUT_S:g}; "
-        f"asv: {ASV_CASE_TIMEOUT_S}, all rounds, each also stopped at the benchmark's own timeout)",
+        help=f"seconds before one case is stopped (default: timeouts.case_s, else "
+        f"{config_mod.DEFAULTS['timeouts.case_s']:g}; asv: {harnesses.ASV.DEFAULT_CASE_TIMEOUT_S}, "
+        "all rounds, each also stopped at the benchmark's own timeout)",
     )
     p.add_argument(
         "--label",
@@ -1398,10 +1387,13 @@ def main(argv=None):
         "--k",
         type=float,
         help="confidence in normal sigmas: the threshold is the t quantile with that two-sided tail, "
-        "times the noise (default: compare.k, else 3)",
+        f"times the noise (default: compare.k, else {config_mod.DEFAULTS['compare.k']:g})",
     )
     p.add_argument(
-        "--min-rounds", type=int, help="fewest paired rounds for a verdict (default: compare.min_rounds, else 4)"
+        "--min-rounds",
+        type=int,
+        help=f"fewest paired rounds for a verdict (default: compare.min_rounds, else "
+        f"{config_mod.DEFAULTS['compare.min_rounds']})",
     )
     p.add_argument("--json", action="store_true")
     p.add_argument(
@@ -1431,7 +1423,8 @@ def main(argv=None):
     measure.add_argument(
         "--rounds",
         type=int,
-        help=f"alternation rounds; each runs both sides once (default: compare.rounds, else {session.ROUNDS})",
+        help=f"alternation rounds; each runs both sides once (default: compare.rounds, else "
+        f"{config_mod.DEFAULTS['compare.rounds']})",
     )
     measure.add_argument(
         "--no-ingest", action="store_true", help="write result files and compare in memory; skip the local store"

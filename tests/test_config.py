@@ -1,6 +1,7 @@
 """benchx.conf.json: where it is found, what it holds, and how a value is picked (benchx.config)."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -110,23 +111,27 @@ def test_the_old_files_are_not_read_and_not_ignored(tree, legacy):
 
 def test_the_command_line_wins_then_the_file_then_the_default(tree):
     cfg = config.load(tree)
-    assert cfg.pick("flag", "file", "default", flag="--x", key="x") == "flag"
-    assert cfg.pick(None, "file", "default", flag="--x", key="x") == "file"
-    assert cfg.pick(None, None, "default", flag="--x", key="x") == "default"
-    assert cfg.pick(None, None, None, flag="--x", key="x") is None  # None is a default too
-    assert cfg.pick(0, 5, 9, flag="--x", key="x") == 0  # a falsy flag still counts as given
+    assert cfg.pick("compare.k", None, flag="--k") == 3.0
+    assert cfg.pick("compare.k", 2.0, flag="--k") == 2.0
+    assert cfg.pick("project", None, flag="--project", default=None) is None  # None is a default too
+    assert cfg.pick("adapter.verbosity", 0, flag="--harness-verbosity") == 0  # falsy flag counts as given
+
+    write_config(tree, compare={"k": 4.5})
+    file_cfg = config.load(tree)
+    assert file_cfg.pick("compare.k", None, flag="--k") == 4.5
+    assert file_cfg.pick("compare.k", 2.0, flag="--k") == 2.0
 
 
 def test_a_missing_required_value_names_the_flag_and_the_key(tree):
     with pytest.raises(
         config.ConfigError, match=r"--suite is required: give it, or set adapter\.suite in .*none found"
     ):
-        config.load(tree).pick(None, None, flag="--suite", key="adapter.suite")
+        config.load(tree).pick("adapter.suite", None, flag="--suite")
     write_config(tree)
     with pytest.raises(
         config.ConfigError, match=r"--suite is required: give it, or set adapter\.suite in .*benchx\.conf\.json"
     ):
-        config.load(tree).pick(None, None, flag="--suite", key="adapter.suite")
+        config.load(tree).pick("adapter.suite", None, flag="--suite")
 
 
 def test_a_provider_is_needed_only_when_a_target_asks_for_it(tree):
@@ -202,6 +207,58 @@ def test_show_says_where_each_value_comes_from(tree, monkeypatch, capsys):
     assert '"demo"  (file)' in out and '"mod.py"  (file)' in out
     assert "compare.rounds             6  (default)" in out and "compare.min_rounds         4  (default)" in out
     assert "timeouts.case_s            60  (default)" in out
+
+
+def test_config_get_reads_dotted_keys():
+    cfg = config.Config(root=Path("."), path=None, data={"project": "demo", "compare": {"k": 2.5}})
+    assert cfg.get("project") == "demo"
+    assert cfg.get("compare.k") == 2.5
+    assert cfg.get("compare.rounds") is None
+    assert cfg.get("compare.rounds", 6) == 6
+    assert cfg.get("compare.k.nested", "fallback") == "fallback"
+
+
+def test_centralized_defaults_stay_in_sync_across_modules():
+    from benchx import adapters, orders, session
+    from benchx.core import catalog
+    from benchx.methods.paired_relative import PairedRelative
+
+    schema = json.loads((catalog.SCHEMAS / "config" / "0.1.0" / "schema.json").read_text())
+    props = schema["properties"]
+    assert list(config.DEFAULTS["adapter.quantities"]) == props["adapter"]["properties"]["quantities"]["default"]
+    assert config.DEFAULTS["adapter.verbosity"] == props["adapter"]["properties"]["verbosity"]["default"]
+    assert config.DEFAULTS["environment_variables"] == props["environment_variables"]["default"]
+    assert config.DEFAULTS["timeouts.case_s"] == props["timeouts"]["properties"]["case_s"]["default"]
+    assert config.DEFAULTS["timeouts.order_s"] == props["timeouts"]["properties"]["order_s"]["default"]
+    assert config.DEFAULTS["paths.store"] == props["paths"]["properties"]["store"]["default"]
+    assert config.DEFAULTS["paths.results"] == props["paths"]["properties"]["results"]["default"]
+    assert config.DEFAULTS["compare.rounds"] == props["compare"]["properties"]["rounds"]["default"]
+    assert config.DEFAULTS["compare.k"] == props["compare"]["properties"]["k"]["default"]
+    assert config.DEFAULTS["compare.min_rounds"] == props["compare"]["properties"]["min_rounds"]["default"]
+    assert config.DEFAULTS["logging"] == props["logging"]["default"]
+    assert config.DEFAULTS["log_level"] == props["log_level"]["default"]
+
+    # Exact dotted-key lookup never conflates `.` with `_`.
+    assert config.DEFAULTS.get("log.level") is None
+    assert config.DEFAULTS["log_level"] == "debug"
+
+    assert orders.CASE_TIMEOUT_S == config.DEFAULTS["timeouts.case_s"]
+    assert orders.ORDER_TIMEOUT_S == config.DEFAULTS["timeouts.order_s"]
+    assert session.ROUNDS == config.DEFAULTS["compare.rounds"]
+    assert PairedRelative.defaults == {
+        "k": config.DEFAULTS["compare.k"],
+        "min_rounds": config.DEFAULTS["compare.min_rounds"],
+    }
+    assert harnesses.Harness.DEFAULT_CASE_TIMEOUT_S == config.DEFAULTS["timeouts.case_s"]
+    assert harnesses.PYPERF.DEFAULT_PROCESSES == adapters.pyperf.DEFAULTS["processes"]
+    assert harnesses.PYPERF.DEFAULT_VALUES == adapters.pyperf.DEFAULTS["values"]
+
+
+def test_show_uses_harness_case_timeout_default(tree, monkeypatch, capsys):
+    write_config(tree, adapter={"name": "asv", "suite": "benchmarks"})
+    monkeypatch.chdir(tree)
+    assert cli.main(["config", "show"]) == cli.EXIT_OK
+    assert "timeouts.case_s            1800  (default)" in capsys.readouterr().out
 
 
 # --- one file for the adapters that share a precision ---------------------------------
