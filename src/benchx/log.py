@@ -29,6 +29,8 @@ import os
 import shlex
 import sys
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .errors import UsageError
@@ -75,14 +77,14 @@ class _LiveStream(logging.StreamHandler):
     With `reraise=True` (stdout), a broken pipe propagates as a command failure instead of being swallowed.
     """
 
-    def __init__(self, stream_name: str, *, reraise: bool = False):
-        logging.Handler.__init__(self)
-        self._stream_name = stream_name
+    def __init__(self, get_stream: Callable[[], object], *, reraise: bool = False):
+        super(logging.StreamHandler, self).__init__()
+        self._get_stream = get_stream
         self._reraise = reraise
 
     @property
     def stream(self):
-        return getattr(sys, self._stream_name)
+        return self._get_stream()
 
     def handleError(self, record):
         if self._reraise:
@@ -151,19 +153,16 @@ class _Buffer(logging.Handler):
             self.records.append(record)
 
 
+@dataclass
 class _State:
-    def __init__(self):
-        self.verbosity = 0
-        self.buffer = None  # records made before configure()
-        self.console = None  # the console handler, or None
-        self.stdout = None  # the stdout handler, or None
-        self.destination = None  # the file handler, or the --log stderr handler, or None
-        self.level = logging.DEBUG  # the level the destination keeps
-        self.reset_run()
+    verbosity: int = 0
+    handlers: dict[str, logging.Handler] = field(default_factory=dict)
+    started: float | None = None
+    degraded: list[str] = field(default_factory=list)
+    once: set = field(default_factory=set)
 
     def reset_run(self) -> None:
-        self.configured = False  # a destination is on, so a header was written and a footer is due
-        self.started = None  # time.monotonic() at the header
+        self.started = None
         self.degraded = []
         self.once = set()
 
@@ -180,29 +179,18 @@ def _cli_logger() -> logging.Logger:
 
 
 def _apply_level() -> None:
-    """The `benchx` logger passes the lowest level any handler wants, so a record nobody reads
-    costs nothing (and `isEnabledFor(DEBUG)` is false when nothing wants DEBUG)."""
-    wanted = [logging.DEBUG] if _state.buffer is not None else []
-    if _state.console is not None:
-        wanted.append(_state.console.level)
-    if _state.stdout is not None:
-        wanted.append(logging.INFO)  # what `out` says goes by its tier, not its level
-    if _state.destination is not None:
-        wanted.append(_state.level)
-    # With nothing to serve the logger defers to the root's, which is WARNING unless a library caller has set
-    # it: a fixed WARNING here would outlive `stop()` and hide the records from a caller that logs at INFO.
-    _logger().setLevel(min(wanted) if wanted else logging.NOTSET)
+    """Pass the lowest level any attached handler wants (or `NOTSET` when detached)."""
+    _logger().setLevel(min((h.level for h in _state.handlers.values()), default=logging.NOTSET))
 
 
-def _detach(*attrs: str) -> None:
-    for attr in attrs:
-        if (handler := getattr(_state, attr)) is not None:
+def _detach(*names: str) -> None:
+    for name in names:
+        if (handler := _state.handlers.pop(name, None)) is not None:
             _logger().removeHandler(handler)
             handler.close()
-            setattr(_state, attr, None)
 
 
-def _attach(attr: str, handler: logging.Handler, *, level: int | None = None, formatter=None, filters=()):
+def _attach(name: str, handler: logging.Handler, *, level: int | None = None, formatter=None, filters=()):
     if level is not None:
         handler.setLevel(level)
     if formatter is not None:
@@ -210,7 +198,7 @@ def _attach(attr: str, handler: logging.Handler, *, level: int | None = None, fo
     for fn in filters:
         handler.addFilter(fn)
     _logger().addHandler(handler)
-    setattr(_state, attr, handler)
+    _state.handlers[name] = handler
     return handler
 
 
@@ -259,17 +247,19 @@ def start_console(verbosity: int = 0) -> None:
     _attach("buffer", _Buffer())
     _state.verbosity = verbosity
     level, only_console = _CONSOLE[verbosity]
-    console_filters = [_is_not_stdout, _is_stderr_visible, *([_is_console_only] if only_console else [])]
+    console_filters = [_is_not_stdout, _is_stderr_visible]
+    if only_console:
+        console_filters.append(_is_console_only)
     _attach(
         "console",
-        _LiveStream("stderr"),
+        _LiveStream(lambda: sys.stderr),
         level=min(level, logging.INFO),  # `_is_stderr_visible` holds back what the level does not show
         formatter=logging.Formatter("%(message)s"),
         filters=console_filters,
     )
     _attach(
         "stdout",
-        _LiveStream("stdout", reraise=True),
+        _LiveStream(lambda: sys.stdout, reraise=True),
         level=logging.INFO,
         formatter=_Bare(),
         filters=(_is_stdout_shown,),
@@ -282,20 +272,21 @@ def configure(setting, *, level: int = logging.DEBUG, argv=None) -> None:
     carries the whole log, in the full format) or a resolved `Path` (appended to, never
     truncated). Writes the header record. Idempotent: it replaces what an earlier call set up
     and closes the file it had open. OSError when a file cannot be opened."""
-    earlier = _state.buffer.records if _state.buffer else []
+    buffer = _state.handlers.get("buffer")
+    earlier = buffer.records if buffer else []
     _detach("destination", "buffer")  # from here on the destination, if any, takes the records
     _state.reset_run()
-    if setting is False or setting is None:
+    if not setting:
         _apply_level()
         return
     if setting is True:
         # One stderr handler: the log stream, which `-v` and `-q` do not touch.
         _detach("console")
-        target = _LiveStream("stderr")
+        target = _LiveStream(lambda: sys.stderr)
     else:
         target = logging.FileHandler(Path(setting), mode="a", encoding="utf-8", errors="backslashreplace")
     handler = _attach("destination", target, level=level, formatter=_Full())
-    _state.level, _state.configured, _state.started = level, True, time.monotonic()
+    _state.started = time.monotonic()
     _apply_level()
     _header(argv)
     # What happened before the log was on, in order. The console handler has shown what it shows, so a
@@ -308,8 +299,7 @@ def configure(setting, *, level: int = logging.DEBUG, argv=None) -> None:
 def stop() -> None:
     """Remove every handler this module installed, and close the file. `cli.main` calls it
     on the way out, so a library call that follows in the same process is silent again."""
-    _detach("console", "stdout", "destination", "buffer")
-    # Clear module state so a library call after `cli.main` starts clean.
+    _detach(*list(_state.handlers))
     _state.verbosity = 0
     _state.reset_run()
     _apply_level()
@@ -317,7 +307,7 @@ def stop() -> None:
 
 def configured() -> bool:
     """A destination is on: a header was written, and a footer is due."""
-    return _state.configured
+    return "destination" in _state.handlers
 
 
 def _header(argv) -> None:
@@ -331,7 +321,7 @@ def footer(outcome: str, code: int | None = None) -> None:
     """The record that ends an invocation: its outcome word, exit code and elapsed time, then
     what it left undone, if anything (`degraded`). A missing footer is itself the evidence of a
     process that was killed."""
-    if not _state.configured:
+    if not configured():
         return
     elapsed = time.monotonic() - _state.started
     took = f"{elapsed:.1f} s" if elapsed < 10 else f"{elapsed:.0f} s"
@@ -410,8 +400,8 @@ def _parse_int(text, *, minimum: int, message: str, exc_type=UsageError) -> int:
     try:
         value = int(text)
     except (TypeError, ValueError):
-        value = None
-    if value is None or value < minimum:
+        raise exc_type(message) from None
+    if value < minimum:
         raise exc_type(message)
     return value
 
@@ -464,10 +454,11 @@ def resolve_harness_verbosity(cfg, args) -> tuple[int, str]:
 def resolve_log_level(cfg, args) -> tuple[int, str]:
     """Resolve the diagnostic log level from `--log-level`, `$BENCHX_LOG_LEVEL`, `log_level`, or default."""
     value, source = cfg.pick_with_source("log_level", args.log_level, flag="--log-level", env=LOG_LEVEL_ENV)
-    if value.lower() not in LEVELS:
+    level_name = value.lower()
+    if level_name not in LEVELS:
         origin = f"{LOG_LEVEL_ENV}={value}" if source.startswith("environment ") else f"log_level in {cfg.path}"
         raise UsageError(f"{origin}: not one of {', '.join(LEVELS)}")
-    return LEVELS[value.lower()], source
+    return LEVELS[level_name], source
 
 
 def _resolve_log_path(cfg, raw: str, *, source: str, out=None, command: str | None = None) -> Path | str:
@@ -499,14 +490,15 @@ def prepare_log_file(path: Path, out, origin: str) -> Path:
     folder = Path(out).resolve() if out is not None else None
     if path == folder or path.is_dir():
         path = path / DEFAULT_LOG_FILENAME
-    if str(path).endswith(".json"):
+    if path.name.endswith(".json"):
         raise UsageError(f"{origin}: a log file must not end in .json")
     try:
         # Only the output folder itself is created, and only for a file directly in it or an existing
         # subfolder: a refused path leaves nothing behind.
         if folder is not None and path.is_relative_to(folder) and (path.parent == folder or path.parent.is_dir()):
             folder.mkdir(parents=True, exist_ok=True)
-        path.open("a").close()
+        with path.open("a"):
+            pass
     except OSError as e:
         raise UsageError(f"{origin}: cannot open {path}: {e}") from None
     return path
@@ -547,9 +539,8 @@ def log_startup(
         found = cfg.path or f"none found from {Path.cwd()} upward"
         home = ""
         if os.environ.get(home_env):
-            home = f" (set by ${home_env}" + (
-                ", which hides paths.store in the file)" if "store" in cfg.section("paths") else ")"
-            )
+            note = ", which hides paths.store in the file" if "store" in cfg.section("paths") else ""
+            home = f" (set by ${home_env}{note})"
         cli_logger.info(
             "config file: %s; project root %s; store %s%s; results %s",
             found,
@@ -561,14 +552,14 @@ def log_startup(
         if cfg.data:
             cli_logger.debug("config data: %s", cfg.data)
     skip = {"fn", "argv", "verbosity", "verbosity_source", "verbose_extra"}
-    # `0 == False`, so check identity (`is not False`) rather than `not in (False, ...)` to keep `--slot 0`.
-    shown_args = {
-        name: value
-        for name, value in vars(args).items()
-        if name not in skip and value is not None and value is not False and value != [] and value != ()
-    }
-    cli_logger.debug("arguments as parsed: %s", ", ".join(f"{k}={v!r}" for k, v in sorted(shown_args.items())))
-    shown_env = [f"{name}={os.environ[name]}" if os.environ.get(name) else f"{name} not set" for name in CONTROL_ENV]
+    # `0 == False`, so check `is not False` explicitly to keep `--slot 0`.
+    formatted_args = ", ".join(
+        f"{name}={value!r}"
+        for name, value in sorted(vars(args).items())
+        if name not in skip and value is not False and value not in (None, [], ())
+    )
+    cli_logger.debug("arguments as parsed: %s", formatted_args)
+    shown_env = [f"{name}={val}" if (val := os.environ.get(name)) else f"{name} not set" for name in CONTROL_ENV]
     cli_logger.debug(
         "environment variables consulted: %s; PATH is %s",
         "; ".join(shown_env),
