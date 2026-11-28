@@ -14,7 +14,7 @@ import statistics
 from pathlib import Path
 
 from . import core, snapshot
-from .errors import SessionError
+from .errors import SessionError, UsageError
 from .projection import declared_workload, said, workload_label
 from .results import warning_codes
 
@@ -68,6 +68,24 @@ def asv_target(path, tree=None) -> tuple[str, str]:
         return str(root), benchmark_dir.relative_to(root).as_posix()
     except ValueError:
         raise SessionError(f"{benchmark_dir} is not inside the tree {root}; give --tree") from None
+
+
+def resolve_target(
+    target: str, *, adapter: str | None = None, suite: str | None = None, tree: str | None = None
+) -> tuple[str, str | None, str | None]:
+    """Resolve CLI target/suite/adapter, handling pyperf `.py` and asv directory shorthands."""
+    if not suite and adapter == "asv":
+        logger.debug("the asv shorthand: --adapter asv on the command line, and no --suite")
+        return (*asv_target(target, tree), "asv")
+    if suite or not target.endswith(".py"):
+        if tree:
+            raise UsageError("--tree belongs to the shorthands; give the tree as the TARGET with --suite")
+        logger.debug("a plain target: %s, with the suite from --suite or the file's adapter.suite", target)
+        return target, None, None
+    if adapter not in (None, "pyperf"):
+        raise UsageError(f"a Python file is benchmarked with pyperf, not {adapter}")
+    logger.debug("the Python-module shorthand: %s is benchmarked with pyperf", target)
+    return (*module_target(target, tree), "pyperf")
 
 
 def summarize(files) -> list[dict]:

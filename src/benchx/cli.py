@@ -7,6 +7,7 @@ the file, and the file over a built-in default.
 """
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import logging
@@ -132,42 +133,8 @@ def cmd_run(args):
     return _report(store.ingest_paths(summary["files"]), store.path)
 
 
-def _environment(items) -> dict:
-    """`-e NAME=VALUE`, repeated, as a mapping; UsageError on a malformed item."""
-    env = {}
-    for item in items or []:
-        name, eq, value = item.partition("=")
-        if not (name and eq):
-            # Not echoed: a value typed without its NAME, or after an empty one, is a secret more
-            # often than a typo, and this message goes to stderr and to the log.
-            raise UsageError("-e wants NAME=VALUE (the item is not shown, in case it holds a value)")
-        env[name] = value
-    return env
-
-
-def _parse_round(text) -> tuple[int | None, int | None]:
-    """`--round R` or `--round R/N`: the round, numbered from 0, and how many rounds the session has when the
-    caller says (only the start line shows it: the work order records the round alone). UsageError."""
-    if text is None:
-        return None, None
-    first, slash, last = text.partition("/")
-    try:
-        round_, rounds = int(first), int(last) if slash else None
-    except ValueError:
-        raise UsageError(f"--round wants R, or R/N for a session of N rounds, whole numbers, not {text!r}") from None
-    if round_ < 0:
-        raise UsageError(f"--round wants a number from 0, not {round_}")
-    if rounds is not None and rounds < 1:
-        raise UsageError(f"--round {text}: a session has at least 1 round, not {rounds}")
-    if rounds is not None and not round_ < rounds:
-        raise UsageError(f"--round {text}: with {rounds} round(s) they are numbered 0 to {rounds - 1}")
-    return round_, rounds
-
-
 def _session_position(args) -> tuple[dict, int | None, int | None, int | None]:
-    """Where `bx bench` sits in a session that other calls join through the same `--run-key`: its
-    `--label NAME=VALUE`s, `--round` (and, with `--round R/N`, the session's number of rounds) and `--slot`.
-    UsageError when they could not join one."""
+    """Validate and return `(labels, round_, slot, total_rounds)` when joining a multi-call session."""
     labels = {}
     for item in args.label or []:
         name, eq, value = item.partition("=")
@@ -177,11 +144,24 @@ def _session_position(args) -> tuple[dict, int | None, int | None, int | None]:
         if name in labels:
             raise UsageError(f"--label {name} is given twice")
         labels[name] = value
-    round_, rounds = _parse_round(args.round)
+    round_, rounds = None, None
+    if args.round is not None:
+        first, slash, last = args.round.partition("/")
+        try:
+            round_, rounds = int(first), int(last) if slash else None
+        except ValueError:
+            raise UsageError(
+                f"--round wants R, or R/N for a session of N rounds, whole numbers, not {args.round!r}"
+            ) from None
+        if round_ < 0:
+            raise UsageError(f"--round wants a number from 0, not {round_}")
+        if rounds is not None and rounds < 1:
+            raise UsageError(f"--round {args.round}: a session has at least 1 round, not {rounds}")
+        if rounds is not None and round_ >= rounds:
+            raise UsageError(f"--round {args.round}: with {rounds} round(s) they are numbered 0 to {rounds - 1}")
     if args.slot is not None and args.slot < 0:
         raise UsageError(f"--slot wants a number from 0, not {args.slot}")
-    placed = labels or round_ is not None or args.slot is not None
-    if placed and not args.run_key:
+    if (labels or round_ is not None or args.slot is not None) and not args.run_key:
         raise UsageError(
             "--label, --round and --slot need an explicit --run-key: the default is a timestamp "
             "per call, so two calls would never share a run"
@@ -194,35 +174,13 @@ def _session_position(args) -> tuple[dict, int | None, int | None, int | None]:
     return labels, round_, args.slot, rounds
 
 
-def _bench_target(args) -> tuple[str, str | None, str | None]:
-    """The target, the suite it forces (or None: --suite, then the file's), and the
-    adapter it forces. With `--suite` the target is as given. Without it, the target
-    is a Python module (the shorthand `bx bench MODULE.py [FUNCTION ...]`): its
-    checkout is the target, its path in it the suite, and the harness pyperf. With
-    `--adapter asv` it is an asv suite instead (`bx bench PATH --adapter asv`): PATH
-    holds asv.conf.json or is the benchmark directory."""
-    if not args.suite and args.adapter == "asv":
-        logger.debug("the asv shorthand: --adapter asv on the command line, and no --suite")
-        return (*bench_mod.asv_target(args.target, args.tree), "asv")
-    if args.suite or not args.target.endswith(".py"):
-        if args.tree:
-            raise UsageError("--tree belongs to the shorthands; give the tree as the TARGET with --suite")
-        logger.debug("a plain target: %s, with the suite from --suite or the file's adapter.suite", args.target)
-        return args.target, None, None
-    if args.adapter not in (None, "pyperf"):
-        raise UsageError(f"a Python file is benchmarked with pyperf, not {args.adapter}")
-    logger.debug("the Python-module shorthand: %s is benchmarked with pyperf", args.target)
-    target, suite = bench_mod.module_target(args.target, args.tree)
-    return target, suite, "pyperf"
-
-
 def _common(cfg, args, *, forced_adapter=None, forced_suite=None) -> dict:
-    """The settings `bx bench` and `bx compare` share, each from the command line,
-    else the file, else its default (config.Config.pick); ConfigError when a
-    required one has none. The file's adapter block belongs to the adapter it
-    names and to the others of its family (pyperf's serves asv), so naming an
-    adapter of another family is refused. `sources` lists each setting with where it came
-    from, for the log (the caller pops it before the rest goes to `session`)."""
+    """Resolve settings shared by `bx bench` and `bx compare` (`CLI flags > benchx.conf.json > defaults`).
+
+    Validates harness family compatibility and precision flags, returning the normalized settings dict
+    plus a `sources` list of `(name, value, source)` tuples for diagnostic logging (popped before
+    forwarding the dict to `session`).
+    """
     block = cfg.adapter
     given = forced_adapter or args.adapter
     if given and block.get("name") and not harnesses.same_family(given, block["name"]):
@@ -246,7 +204,6 @@ def _common(cfg, args, *, forced_adapter=None, forced_suite=None) -> dict:
     )
     if args.project and args.no_project:
         raise UsageError("give --project or --no-project, not both")
-    timeouts = cfg.section("timeouts")
     adapter, adapter_source = cfg.pick_with_source("adapter.name", given, flag="--adapter")
     named = block.get("name")
     if given and named and given != named:  # the file's block serves another adapter of its family
@@ -254,15 +211,22 @@ def _common(cfg, args, *, forced_adapter=None, forced_suite=None) -> dict:
     sources.append(("adapter", adapter, adapter_source))
     suite, suite_source = cfg.pick_with_source("adapter.suite", forced_suite or args.suite, flag="--suite")
     sources.append(("suite", suite, suite_source))
-    from_flag, from_file = _environment(args.env), cfg.section("environment_variables")
+    from_flag = {}
+    for item in args.env or []:
+        name, eq, value = item.partition("=")
+        if not (name and eq):
+            # Avoid echoing `item`: it often holds a secret rather than a NAME=VALUE typo.
+            raise UsageError("-e wants NAME=VALUE (the item is not shown, in case it holds a value)")
+        from_flag[name] = value
+    from_file = cfg.section("environment_variables")
     environment_variables = {**from_file, **from_flag}
     where = [
-        f"-e: {', '.join(sorted(from_flag))}" if from_flag else "",
-        f"file: {', '.join(sorted(from_file))}" if from_file else "",
+        *(["-e: " + ", ".join(sorted(from_flag))] if from_flag else []),
+        *(["file: " + ", ".join(sorted(from_file))] if from_file else []),
     ]
     if overrode := sorted(set(from_flag) & set(from_file)):
         where.append(f"-e overrode the file's {', '.join(overrode)}")
-    sources.append(("environment_variables", "names only", "; ".join(w for w in where if w) or "default: none"))
+    sources.append(("environment_variables", "names only", "; ".join(where) or "default: none"))
     if args.no_project:
         project = None
         sources.append(("project", "none: results are filed as local/HOST", "flag --no-project"))
@@ -282,8 +246,8 @@ def _common(cfg, args, *, forced_adapter=None, forced_suite=None) -> dict:
     if case_source == "default":
         case_source = "default for asv, which times every round of a benchmark" if adapter == "asv" else "default"
     sources.append(("timeouts.case_s", f"{case_s:g} s", case_source))
-    order_s = timeouts.get("order_s", config_mod.DEFAULTS["timeouts.order_s"])
-    sources.append(("timeouts.order_s", f"{order_s:g} s", "file" if "order_s" in timeouts else "default"))
+    order_s, order_source = cfg.pick_with_source("timeouts.order_s", None, flag="")
+    sources.append(("timeouts.order_s", f"{order_s:g} s", order_source))
     flagged = [name for name in harnesses.FLAG_NAMES if getattr(args, name) is not None]
     precision_file = sorted(block.get("precision") or {})
     sources.append(
@@ -324,39 +288,25 @@ def _common(cfg, args, *, forced_adapter=None, forced_suite=None) -> dict:
     }
 
 
-def _needs_provider(cfg, *targets):
-    for spec in targets:
-        if spec.startswith("@"):
-            cfg.require_provider(spec)
-
-
-def _placed(settings, rounds=None) -> str:
-    """` (round 1/5, slot 3)`: where a `bx bench` call sits in a session, as the start line says it, with the
-    session's number of rounds when the caller gave it (`--round 1/5`); empty when alone."""
-    parts = [
-        f"round {settings['round_']}{f'/{rounds}' if rounds else ''}" if settings["round_"] is not None else "",
-        f"slot {settings['slot']}" if settings["slot"] is not None else "",
-        ", ".join(f"{name}={value}" for name, value in (settings["labels"] or {}).items()),
-    ]
-    return f" ({', '.join(part for part in parts if part)})" if any(parts) else ""
-
-
 def cmd_bench(args):
-    """Run one target once, as one order of a comparison session: resolve the target,
-    build the order from the harness defaults, config file, flags and environment
-    variables, run it, deliver, print a table."""
+    """Run one target once, print its summary table, and optionally ingest results into the local store.
+
+    Validates flags, provider requirements, and harness settings before creating the output folder
+    or starting the run log.
+    """
     cfg = _load()
     if args.functions and args.filter:
         raise UsageError("give case names or --filter, not both")
-    target, forced_suite, forced_adapter = _bench_target(args)
+    target, forced_suite, forced_adapter = bench_mod.resolve_target(
+        args.target, adapter=args.adapter, suite=args.suite, tree=args.tree
+    )
     settings = _common(cfg, args, forced_adapter=forced_adapter, forced_suite=forced_suite)
     settings["labels"], settings["round_"], settings["slot"], rounds = _session_position(args)
     session.check_harness(settings["adapter"], settings["flags"], settings["file_precision"], settings["quantities"])
-    _needs_provider(cfg, target)
+    if target.startswith("@"):
+        cfg.require_provider(target)
     # A name may carry `(arguments)` where the harness has parametrized benchmarks.
     names = harnesses.exact_filter(args.functions, harnesses.get(settings["adapter"]).NAMES_TAKE_ARGUMENTS)
-    # The run key and the output folder are settled before any target is resolved (a provider
-    # may build), so the log can live in the folder from the start.
     run_key = args.run_key or orders.default_run_key("bench")
     out = Path(args.out) if args.out else session.run_directory(cfg.results_dir, run_key)
     cfg = _start_logging(cfg, args, out, "bench")
@@ -371,13 +321,20 @@ def cmd_bench(args):
     settings["run_key"], settings["out"] = run_key, out
     settings["filter"] = names or settings["filter"]
     store = None if args.no_ingest else _open_store(cfg.store_path, hint="pass --no-ingest to write JSON results only")
-    # Where a quiet run says it started, before a provider that builds takes its time.
-    say.progress(
-        f"measuring {Path(settings['suite']).name if settings.get('suite') else 'the suite'} on {target}"
-        + _placed(settings, rounds)
-    )
+    # Include session placement `(round R[/N], slot S, k=v)` on the stderr progress line when present.
+    placed_parts = [
+        p
+        for p in (
+            f"round {settings['round_']}{f'/{rounds}' if rounds else ''}" if settings["round_"] is not None else "",
+            f"slot {settings['slot']}" if settings["slot"] is not None else "",
+            ", ".join(f"{name}={value}" for name, value in (settings["labels"] or {}).items()),
+        )
+        if p
+    ]
+    placed = f" ({', '.join(placed_parts)})" if placed_parts else ""
+    suite_label = Path(settings["suite"]).name if settings.get("suite") else "the suite"
+    say.progress(f"measuring {suite_label} on {target}{placed}")
     summary = session.bench_target(target, store=store, progress=say.info, **settings)
-    # What the run reports goes through the marker: stdout, by the tiers `-q` and `-qq` leave, and the log.
     rows = bench_mod.summarize(summary["files"])
     say.out(bench_mod.render(rows), log.TABLE)
     _report_unmeasured(rows)
@@ -389,6 +346,7 @@ def cmd_bench(args):
 
 
 def cmd_config(args):
+    """Initialize a starter `benchx.conf.json` or display resolved configuration and logging settings."""
     if args.action == "init":
         # `init` does not read the file: it resolves the logging settings from the flags and the environment
         _start_logging(config_mod.Config.empty(), args, None, "config", read_config=False)
@@ -442,9 +400,10 @@ def _resolved(cfg: config_mod.Config):
 
 
 def _report(outcome, store_path=None):
-    """The ingest counts. After a run (`store_path` names the store) they are a progress message,
-    `STORE: ingested 3, duplicate 0`, on stderr as every progress message is: `-q` does not show it. For the
-    command that ingests they are its answer, on stdout, whatever the verbosity."""
+    """Report ingest counts (on stderr at INFO after a run, or on stdout at ANSWER for `bx ingest`).
+
+    Returns `EXIT_INVALID` if any document was rejected, otherwise `EXIT_OK`.
+    """
     for r in outcome["rejected"]:
         say.warning(f"  rejected {r['document']}: {r['code']} — {r['message']}")
     counts = f"ingested {outcome['ingested']}, duplicate {outcome['duplicate']}"
@@ -459,12 +418,14 @@ def _report(outcome, store_path=None):
 
 
 def cmd_ingest(args):
+    """Validate result files or directories and ingest them into the local store."""
     _, store = _prepare(args, open_store=True)
     logger.info("ingesting %d path(s): %s", len(args.paths), ", ".join(str(Path(p).resolve()) for p in args.paths))
     return _report(store.ingest_paths(args.paths))
 
 
 def cmd_series(args):
+    """List distinct series in the local store matching optional filters."""
     _, store = _prepare(args, open_store=True)
     listed = store.series(args.workload, args.quantity)
     if not listed:
@@ -478,6 +439,7 @@ def cmd_series(args):
 
 
 def cmd_history(args):
+    """Print chronological measurement history for a stored series."""
     _, store = _prepare(args, open_store=True)
     points = store.history(args.series)
     if not points:
@@ -501,6 +463,7 @@ def cmd_history(args):
 
 
 def cmd_head(args):
+    """Show the latest ingested results from the local store."""
     _, store = _prepare(args, open_store=True)
     total, rows = store.head(args.n, args.project, args.workload, measurands=args.table)
     if args.json:
@@ -558,7 +521,8 @@ def cmd_target(args):
     """Ask for a target's description: `describe` only reports, `prepare` may
     build (the provider's own tools do that, never benchx)."""
     cfg = _prepare(args)
-    _needs_provider(cfg, args.target)
+    if args.target.startswith("@"):
+        cfg.require_provider(args.target)
     description = target_mod.resolve(args.target, operation=args.operation, provider=cfg.provider)
     if description is None:
         say.warning(f"{args.target} has no description: no {target_mod.SIDECAR} in it")
@@ -587,19 +551,18 @@ _MEASURE_ONLY = (
 _READ_ONLY = ("baseline", "results")
 
 
-def _flags(args, names):
-    return [f"--{n.replace('_', '-')}" for n in names if getattr(args, n) not in (None, [], False)]
-
-
 def _mode(args, profile) -> str:
-    """read or measure. Measure mode takes two targets, except for variants, whose sides are two
-    values of one parameter of one target; and there `--baseline` picks the baseline value."""
+    """Select `'measure'` or `'read'` mode and reject flags incompatible with the chosen mode."""
     variants = profile == "variants"
     targets = "one target" if variants else "two targets"
     if args.targets and args.run:
         raise UsageError(f"give {targets} or --run, not both")
     if not args.targets and not args.run:
         raise UsageError(f"give {targets} (measure mode) or --run KEY (read mode)")
+
+    def flagged(names):
+        return [f"--{n.replace('_', '-')}" for n in names if getattr(args, n) not in (None, [], False)]
+
     if args.targets:
         if len(args.targets) != (1 if variants else 2):
             raise UsageError(
@@ -607,10 +570,10 @@ def _mode(args, profile) -> str:
                 if variants
                 else "measure mode takes exactly two targets: BASELINE CONTENDER"
             )
-        if wrong := _flags(args, ("results",) if variants else _READ_ONLY):
+        if wrong := flagged(("results",) if variants else _READ_ONLY):
             raise UsageError(f"{', '.join(wrong)} belongs to read mode (--run)")
         return "measure"
-    if wrong := _flags(args, _MEASURE_ONLY):
+    if wrong := flagged(_MEASURE_ONLY):
         raise UsageError(f"{', '.join(wrong)} belongs to measure mode ({targets})")
     if not args.baseline:
         raise UsageError("read mode needs --baseline")
@@ -618,11 +581,23 @@ def _mode(args, profile) -> str:
 
 
 def cmd_compare(args):
+    """Compare two targets by measuring them or analyze stored results from an existing run."""
     cfg = _load()
     policy, sources = _policy(cfg, args)
     mode = _mode(args, policy["profile"])
-    _profile_flags(args, policy["profile"])
-    _view_flags(args)
+    if args.vary and policy["profile"] != "variants":
+        raise UsageError(
+            f"--vary names the parameter whose values are the sides of a variants comparison, not of {policy['profile']}"
+        )
+    if args.label and policy["profile"] == "variants":
+        raise UsageError(
+            "--label names the sides of an environments comparison; the sides of a variants "
+            "comparison are two values of a parameter (--vary)"
+        )
+    if args.tables and args.json:
+        raise UsageError("--tables is a text view: not with --json")
+    if args.all and not args.tables:
+        raise UsageError("--all goes with --tables")
     sources.append(("mode", mode, "inferred: " + ("targets were given" if mode == "measure" else "--run was given")))
     return _measure(cfg, args, policy, sources) if mode == "measure" else _read(cfg, args, policy, sources)
 
@@ -643,28 +618,8 @@ def _policy(cfg, args) -> tuple[dict, list]:
     return policy, sources
 
 
-def _profile_flags(args, profile):
-    """The flags that name the sides of one profile only."""
-    if args.vary and profile != "variants":
-        raise UsageError(
-            f"--vary names the parameter whose values are the sides of a variants comparison, not of {profile}"
-        )
-    if args.label and profile == "variants":
-        raise UsageError(
-            "--label names the sides of an environments comparison; the sides of a variants "
-            "comparison are two values of a parameter (--vary)"
-        )
-
-
-def _view_flags(args):
-    """--tables is a text view of the comparison, and --all a switch of it."""
-    if args.tables and args.json:
-        raise UsageError("--tables is a text view: not with --json")
-    if args.all and not args.tables:
-        raise UsageError("--all goes with --tables")
-
-
 def _read(cfg, args, policy, sources):
+    """Read stored or ad hoc results for a run and render the comparison."""
     # A read stores nothing, so its records join the run's own log when the run folder exists;
     # and a log that cannot be opened there is skipped, not refused, unless a flag named it.
     run_dir = session.run_directory(cfg.results_dir, args.run)
@@ -678,9 +633,27 @@ def _read(cfg, args, policy, sources):
         if outcome["rejected"]:
             logger.warning("%d document(s) were rejected: the comparison was not run", len(outcome["rejected"]))
             return _report(outcome)
-        return _compare(store, args, policy)
-    store = _open_store(cfg.store_path, hint="pass --results DIR to compare JSON results directly")
-    return _compare(store, args, policy)
+    else:
+        store = _open_store(cfg.store_path, hint="pass --results DIR to compare JSON results directly")
+    documents = store.documents(args.run)
+    parameter = None
+    if policy["profile"] == "variants":
+        parameter = args.vary or compare_mod.infer_parameter(documents, args.run)
+        if not args.vary:  # the choice is recorded in the document's `varying`, and said here too
+            say.info(f"varying: {parameter} (the only parameter)")
+            logger.info("%s was inferred from %d result document(s) of run %s", parameter, len(documents), args.run)
+    doc = compare_mod.compare(
+        documents,
+        run_key=args.run,
+        profile=policy["profile"],
+        baseline=args.baseline,
+        label=args.label,
+        parameter=parameter,
+        k=policy["k"],
+        min_rounds=policy["min_rounds"],
+    )
+    _show(doc, args, documents)
+    return EXIT_OK
 
 
 def _measure(cfg, args, policy, sources):
@@ -688,7 +661,9 @@ def _measure(cfg, args, policy, sources):
     # the check phase: nothing has run, and no folder exists yet
     settings = _common(cfg, args)
     session.check_harness(settings["adapter"], settings["flags"], settings["file_precision"], settings["quantities"])
-    _needs_provider(cfg, *args.targets)
+    for spec in args.targets:
+        if spec.startswith("@"):
+            cfg.require_provider(spec)
     rounds, rounds_source = cfg.pick_with_source("compare.rounds", args.rounds, flag="--rounds")
     label = session.parse_label(args.label) if args.label else None
     store = (
@@ -728,8 +703,8 @@ def _measure(cfg, args, policy, sources):
     return EXIT_OK
 
 
-def _degraded(doc):
-    """What a comparison that exited 0 left undone, for the footer: nothing is added for a clean one."""
+def _show(doc, args, documents):
+    """Print comparison output as JSON or text (and optional tables), noting degraded invariants/units."""
     units, failed = doc["units"], doc.get("failed_invariants", [])
     if failed and not units:
         log.degraded(f"0 units compared, {len(failed)} invariant(s) failed")
@@ -737,11 +712,6 @@ def _degraded(doc):
         log.degraded(f"{len(failed)} invariant(s) failed")
     if indeterminate := [u for u in units if u["verdict"] == "indeterminate"]:
         log.degraded(f"{len(indeterminate)} of {len(units)} units indeterminate")
-
-
-def _show(doc, args, documents):
-    """The comparison as JSON, or as text; with --tables, the asv-style tables follow the summary."""
-    _degraded(doc)
     if args.json:
         print(json.dumps(doc, indent=1))
         return
@@ -756,30 +726,8 @@ def _show(doc, args, documents):
         print(shown)
 
 
-def _compare(store, args, policy):
-    documents = store.documents(args.run)
-    parameter = None
-    if policy["profile"] == "variants":
-        parameter = args.vary or compare_mod.infer_parameter(documents, args.run)
-        if not args.vary:  # the choice is recorded in the document's `varying`, and said here too
-            say.info(f"varying: {parameter} (the only parameter)")
-            logger.info("%s was inferred from %d result document(s) of run %s", parameter, len(documents), args.run)
-    doc = compare_mod.compare(
-        documents,
-        run_key=args.run,
-        profile=policy["profile"],
-        baseline=args.baseline,
-        label=args.label,
-        parameter=parameter,
-        k=policy["k"],
-        min_rounds=policy["min_rounds"],
-    )
-    _show(doc, args, documents)
-    return EXIT_OK
-
-
 def cmd_validate(args):
-    # `validate` does not read the config file: the logging settings come from the flags and the environment.
+    """Validate one or more benchx JSON documents against the requested schema kind."""
     _start_logging(config_mod.Config.empty(), args, None, "validate", read_config=False)
     valid = 0
     logger.info("validating %d file(s) as %s", len(args.files), args.kind)
@@ -810,53 +758,42 @@ def cmd_view(args):
     else:
         source_kwargs["store_path"] = args.store if args.store is not None else cfg.store_path
 
-    if args.marts:
-        write_marts: bool | None = True
-    elif args.no_marts:
-        write_marts = False
-    elif args.out is None:
-        write_marts = False
-    else:
-        write_marts = None
-
-    repo = Path(args.repo) if args.repo is not None else cfg.root
+    write_marts: bool | None = True if args.marts else False if (args.no_marts or args.out is None) else None
     build_kwargs = {
         **source_kwargs,
         "project_file": Path(args.project_file) if args.project_file else None,
         "title": args.title,
-        "repo": repo,
+        "repo": Path(args.repo) if args.repo is not None else cfg.root,
         "write_marts": write_marts,
         "views_format": args.views_format,
         "stamp": args.stamp,
         "config": cfg,
     }
-
-    def _run_build(out_dir: Path) -> dict:
-        try:
-            return views_mod.build_site(out_dir, **build_kwargs)
-        except ModuleNotFoundError as exc:
-            if _is_missing_pyarrow(exc):
-                hint = ""
-                if "store_path" in source_kwargs:
-                    hint = ", or pass --results DIR to build views from JSON results directly"
-                raise BenchxError(f"{exc}{hint}") from None
-            raise
-
     port = 8000 if args.port is None else args.port
     fallback_port = args.port is None
 
-    def _finish(summary: dict, out_dir: Path) -> int:
-        exit_code = EXIT_OK
-        if summary["outcome"] and summary["outcome"]["rejected"]:
-            exit_code = _report(summary["outcome"])
-        counts = summary["counts"]
-        if args.out is not None:
-            print(
-                f"{counts['points']} result(s), {counts['series']} series, "
-                f"{counts['distinct_commits']} commit(s) -> {summary['out']}"
+    with contextlib.ExitStack() as stack:
+        out_dir = (
+            Path(args.out)
+            if args.out is not None
+            else Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="benchx-view-")))
+        )
+        try:
+            summary = views_mod.build_site(out_dir, **build_kwargs)
+        except ModuleNotFoundError as exc:
+            if not _is_missing_pyarrow(exc):
+                raise
+            hint = (
+                ", or pass --results DIR to build views from JSON results directly"
+                if "store_path" in source_kwargs
+                else ""
             )
-        else:
-            print(f"{counts['points']} result(s), {counts['series']} series, {counts['distinct_commits']} commit(s)")
+            raise BenchxError(f"{exc}{hint}") from None
+
+        exit_code = _report(summary["outcome"]) if summary["outcome"] and summary["outcome"]["rejected"] else EXIT_OK
+        counts = summary["counts"]
+        dest = f" -> {summary['out']}" if args.out is not None else ""
+        print(f"{counts['points']} result(s), {counts['series']} series, {counts['distinct_commits']} commit(s){dest}")
         if serve:
             try:
                 views_mod.serve_site(
@@ -869,14 +806,6 @@ def cmd_view(args):
             except OSError as exc:
                 raise BenchxError(f"cannot serve on {args.host}:{port}: {exc}") from None
         return exit_code
-
-    if args.out is not None:
-        out_dir = Path(args.out)
-        return _finish(_run_build(out_dir), out_dir)
-
-    with tempfile.TemporaryDirectory(prefix="benchx-view-") as tmp:
-        out_dir = Path(tmp)
-        return _finish(_run_build(out_dir), out_dir)
 
 
 def _add_target_options(parser, command):
