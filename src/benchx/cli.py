@@ -32,20 +32,6 @@ from .results import MemoryStore, warning_codes
 EXIT_OK = 0
 EXIT_INVALID = 1  # a document invalid, a result rejected, or a target without a description
 EXIT_REFUSED = 2  # the command was refused or could not be carried out
-VERBOSE_ENV = "BENCHX_VERBOSE"
-LOG_LEVEL_ENV = "BENCHX_LOG_LEVEL"
-HARNESS_VERBOSITY_ENV = "BENCHX_HARNESS_VERBOSITY"
-# benchx's own control variables: every one the code reads. They are settings someone typed for benchx, a fixed
-# list, so the log gives their values; the rest of the inherited environment is never dumped.
-CONTROL_ENV = (
-    "BENCHX_HOME",
-    "BENCHX_VERBOSE",
-    "BENCHX_LOG_LEVEL",
-    "BENCHX_HARNESS_VERBOSITY",
-    "BENCHX_SETUP_FILE",
-    "BENCHX_ENV_ALLOWLIST",
-    "BENCHX_SCHEMAS",
-)
 OUTCOMES = {EXIT_OK: "ok", EXIT_INVALID: "invalid", EXIT_REFUSED: "refused"}
 
 say = log.console(__name__)  # what `bx` shows its user: console messages
@@ -59,220 +45,40 @@ def _load():
     return cfg
 
 
-def _source_text(source, env=None) -> str:
-    return f"environment {env}" if source == "env" else source
-
-
-def _verbosity(args) -> tuple[int, str, int]:
-    """How much the terminal shows, -2 (`-qq`) to 2 (`-vv`), where that came from, and how many `v` there are
-    beyond two: the net count of `-v` and `-q`, else $BENCHX_VERBOSE, else 0. Each one past `-vv` asks the harness
-    to say more (`-vvv` is `-vv` and --harness-verbosity 1). UsageError for a bad variable."""
-    if args.verbose is not None or args.quiet is not None:
-        net, source = (args.verbose or 0) - (args.quiet or 0), "flag"
-    else:
-        net, source = 0, "default"
-        if text := os.environ.get(VERBOSE_ENV):
-            try:
-                net = int(text)
-            except ValueError:
-                net = None
-            if net is None or net < -2:
-                raise UsageError(f"{VERBOSE_ENV}={text}: not a whole number, -2 or more")
-            source = _source_text("env", VERBOSE_ENV)
-    return max(-2, min(2, net)), source, max(0, net - 2)
-
-
-def _non_negative(text) -> int:
-    try:
-        value = int(text)
-    except ValueError:
-        value = -1
-    if value < 0:
-        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number from 0")
-    return value
-
-
-def _harness_verbosity(cfg, args) -> tuple[int, str]:
-    """How much the harness is asked to say, and where that came from: `--harness-verbosity`, else the `v`s past
-    `-vv` on the command line, else $BENCHX_HARNESS_VERBOSITY, else the `v`s past `-vv` that $BENCHX_VERBOSE
-    stands for, else `adapter.verbosity` in the file, else 0 (nothing more). Only the flags beat the
-    environment: $BENCHX_VERBOSE does not override an explicit $BENCHX_HARNESS_VERBOSITY."""
-    given = getattr(args, "harness_verbosity", None)  # `bx config show` has no such option
-    extra = getattr(args, "verbose_extra", 0)
-    from_flag = getattr(args, "verbosity_source", "flag") == "flag"
-    label = None
-    if given is None and extra and from_flag:
-        given, label = extra, "flag: -v past -vv"
-    value, source = cfg.pick_with_source(
-        "adapter.verbosity", given, flag="--harness-verbosity", env=HARNESS_VERBOSITY_ENV
-    )
-    if source == "env":
-        try:
-            value = int(value)
-        except ValueError:
-            value = -1
-        if value < 0:
-            raise UsageError(f"{HARNESS_VERBOSITY_ENV}={os.environ[HARNESS_VERBOSITY_ENV]}: not a whole number from 0")
-    elif extra and not from_flag and source in ("file", "default"):
-        return extra, _source_text("env", VERBOSE_ENV)  # the environment's, which beats the file
-    return value, label if source == "flag" and label else _source_text(source, HARNESS_VERBOSITY_ENV)
-
-
-def _log_level(cfg, args) -> tuple[int, str]:
-    """The level the log keeps, and where it came from: the flag, $BENCHX_LOG_LEVEL, the file's
-    `log_level`, else debug."""
-    value, source = cfg.pick_with_source("log_level", args.log_level, flag="--log-level", env=LOG_LEVEL_ENV)
-    if value.lower() not in log.LEVELS:
-        origin = f"{LOG_LEVEL_ENV}={value}" if source == "env" else f"log_level in {cfg.path}"
-        raise UsageError(f"{origin}: not one of {', '.join(log.LEVELS)}")
-    return log.LEVELS[value.lower()], _source_text(source, LOG_LEVEL_ENV)
-
-
-def _log_setting(cfg, args, out, command):
-    """What the switch says for this command, and where that came from: False (off), True
-    (stderr) or the resolved log file. A command with no output folder (`out` None) logs only
-    when a flag asks: the file, the environment and the default are ignored."""
-    setting, source = cfg.pick_with_source("logging", args.log, flag="--log")
-    if out is None and source != "flag":
-        return False, source
-    if isinstance(setting, str):
-        setting = setting.replace("{root}", str(cfg.root))
-        if "{out}" in setting:
-            if out is None:
-                raise UsageError(f"--log-file {setting}: bx {command} has no output folder")
-            setting = Path(setting.replace("{out}", str(out))).resolve()
-        elif source == "file":
-            setting = cfg._path(setting).resolve()  # relative to the project root, as paths.store is
-        else:
-            setting = Path(setting).expanduser().resolve()  # a flag: relative to the working directory
-    return setting, source
-
-
-def _check_log_file(path, out, origin):
-    """UsageError unless `path` can be appended to. benchx creates only its own output folder."""
-    if str(path).endswith(".json"):
-        raise UsageError(f"{origin}: a log file must not end in .json")
-    folder = Path(out).resolve() if out is not None else None
-    if path == folder or path.is_dir():
-        raise UsageError(f"{origin}: {path} is a directory")
-    try:
-        # Only the output folder itself is created, and only for a file directly in it or in a folder that exists:
-        # a refused path leaves nothing behind.
-        if folder is not None and path.is_relative_to(folder) and (path.parent == folder or path.parent.is_dir()):
-            folder.mkdir(parents=True, exist_ok=True)
-        path.open("a").close()
-    except OSError as e:
-        raise UsageError(f"{origin}: cannot open {path}: {e}") from None
-
-
 def _start_logging(cfg, args, out, command, *, read_config=True, lenient=False):
-    """Turn the log on for this command and return the config with `log_file` set.
-    Called once the command has validated its own flags and values, so a refusal for those
-    leaves no folder, and before it calls `session`. `out` is the command's output folder,
-    or None. `lenient`: a log that cannot be opened is skipped without a word, unless a flag
-    named it (a read must not need to write). Raises UsageError when the setting is unusable."""
-    if args.log is False and args.log_level is not None:
-        raise UsageError("--no-log with --log-level: there is nothing to set a level on")
-    level, level_source = _log_level(cfg, args)
-    setting, source = _log_setting(cfg, args, out, command)
-    if isinstance(setting, Path):
-        origin = {"flag": f"--log-file {args.log}", "file": f"logging in {cfg.path}"}.get(source, "the default log")
-        try:
-            _check_log_file(setting, out, origin)
-        except UsageError:
-            if not (lenient and source != "flag"):
-                raise
-            setting = False
-    log.configure(setting, level=level, argv=args.argv)
-    cfg = dataclasses.replace(cfg, log_file=setting if isinstance(setting, Path) else None)
+    """Configure the diagnostic log for this command and return `cfg` with `log_file` set."""
+    destination, source, level, level_source = log.configure_for_command(cfg, args, out, command, lenient=lenient)
+    cfg = dataclasses.replace(cfg, log_file=destination if isinstance(destination, Path) else None)
     snapshot.ignore(*cfg.own_paths, *([args.out] if getattr(args, "out", None) else []))  # the log is not the tree
-    if read_config:
-        _log_config(cfg)
-    _log_arguments(args)
-    _log_environment()
-    shown = "off" if setting is False else "stderr" if setting is True else str(setting)
-    logger.debug(
-        "logging: %s (%s); log level: %s (%s); verbosity: %d (%s)",
-        shown,
-        _source_text(source),
-        logging.getLevelName(level).lower(),
-        level_source,
-        args.verbosity,
-        args.verbosity_source,
+    log.log_startup(
+        cfg, args, destination, source, level, level_source, read_config=read_config, home_env=config_mod.HOME_ENV
     )
     return cfg
 
 
-def _log_arguments(args):
-    """The arguments as argparse understood them (DEBUG), beside the command line as given in the header: a
-    prefix spelled out, a case name taken from after the options, an option's value. As given: the log makes no
-    claim to hide a value."""
-    skip = {"fn", "argv", "verbosity", "verbosity_source", "verbose_extra"}
-    # `0 == False`, so a test with `in` would drop `--slot 0`: compare by identity
-    shown = {
-        name: value
-        for name, value in vars(args).items()
-        if name not in skip and value is not None and value is not False and value != [] and value != ()
-    }
-    logger.debug("arguments as parsed: %s", ", ".join(f"{name}={value!r}" for name, value in sorted(shown.items())))
-
-
-def _log_environment():
-    """The environment variables `bx` consults that decide what it does (DEBUG): benchx's own, with their values,
-    and whether PATH is set, which the benchmark's `python` is looked up on. The other variables that shape a
-    run are the allowlisted ones, which each order logs by name."""
-    shown = [f"{name}={os.environ[name]}" if os.environ.get(name) else f"{name} not set" for name in CONTROL_ENV]
-    logger.debug(
-        "environment variables consulted: %s; PATH is %s",
-        "; ".join(shown),
-        "set (the benchmark's python is looked up on it)" if os.environ.get("PATH") else "not set",
-    )
-
-
-def _log_config(cfg):
-    """Which config file was used, and where the store and the results are (INFO, once)."""
-    found = cfg.path or f"none found from {Path.cwd()} upward"
-    home = ""
-    if os.environ.get(config_mod.HOME_ENV):
-        home = f" (set by ${config_mod.HOME_ENV}" + (
-            ", which hides paths.store in the file)" if "store" in cfg.section("paths") else ")"
-        )
-    logger.info(
-        "config file: %s; project root %s; store %s%s; results %s",
-        found,
-        cfg.root,
-        cfg.store_path,
-        home,
-        cfg.results_dir,
-    )
-
-
-def _log_settings(sources):
-    """The settings a command resolved, each with its value and where it came from (DEBUG)."""
-    for name, value, source in sources:
-        # the project decides where the results are filed: worth a line at INFO
-        logger.log(logging.INFO if name == "project" else logging.DEBUG, "setting %s: %s (%s)", name, value, source)
-
-
 def _report_unmeasured(rows) -> None:
-    """What a run says about the cases it did not measure, for `bx run` and `bx bench` (the table is the
-    caller's). The section under the table, `case: message`, is an answer when a case failed (WARNING, shown at
-    every verbosity). When only skipped cases said anything, which the run expects, it is INFO and goes with the
-    table. The exit status stays 0 either way: `degraded` puts a phrase in the log's footer for the cases that
-    failed, and on stdout too when what the reader would see leaves some out (a hidden table, or an error that
-    said nothing)."""
-    said = bench_mod.failures(rows)
-    errors = [row for row in rows if not row["status"].startswith(("success", "skipped"))]
-    named = {row["case"] for row in errors if row["message"]}
-    if said:
-        loud = bool(named)
-        say.out(said, log.ANSWER if loud else log.TABLE, level=logging.WARNING if loud else logging.INFO)
-    unmeasured = {row["case"] for row in errors}
-    if unmeasured:
-        cases = {row["case"] for row in rows}
-        silent = unmeasured - named  # nothing on the screen names these, whatever else is shown
+    """Print per-case failure/skip details below the table and record a degraded-run summary.
+
+    The summary table itself is printed by the caller; this prints any per-case `message` strings
+    at WARNING when at least one case failed (always shown), or INFO when only skipped cases had
+    messages (hidden under `-q`). Exit status remains 0 either way, and `log.degraded()` appends
+    the unmeasured count to the log footer (and stdout if quiet mode would otherwise hide failures).
+    """
+    details = bench_mod.failures(rows)
+    failed_rows = [row for row in rows if not row["status"].startswith(("success", "skipped"))]
+    failed_with_msg = {row["case"] for row in failed_rows if row["message"]}
+    if details:
+        has_failures = bool(failed_with_msg)
+        say.out(
+            details, log.ANSWER if has_failures else log.TABLE, level=logging.WARNING if has_failures else logging.INFO
+        )
+    failed_cases = {row["case"] for row in failed_rows}
+    if failed_cases:
+        all_cases = {row["case"] for row in rows}
+        silent_failures = failed_cases - failed_with_msg
         log.degraded(
-            f"{len(unmeasured)} of {len(cases)} cases not measured", shown=bool(log.quiet() and (not named or silent))
+            f"{len(failed_cases)} of {len(all_cases)} cases not measured",
+            shown=bool(log.quiet() and (not failed_with_msg or silent_failures)),
         )
 
 
@@ -489,7 +295,7 @@ def _common(cfg, args, *, forced_adapter=None, forced_suite=None) -> dict:
     )
     if args.filter:
         sources.append(("filter", args.filter, "flag"))
-    harness_verbosity, verbosity_source = _harness_verbosity(cfg, args)
+    harness_verbosity, verbosity_source = log.resolve_harness_verbosity(cfg, args)
     sources.append(("harness verbosity", harness_verbosity, verbosity_source))
     flags = {name: getattr(args, name) for name in harnesses.FLAG_NAMES}
     harnesses.get(adapter).flags_to_precision(**flags)
@@ -561,7 +367,7 @@ def cmd_bench(args):
         out,
         "--out" if args.out else "the results directory",
     )
-    _log_settings(settings.pop("sources"))
+    log.log_settings(settings.pop("sources"))
     settings["run_key"], settings["out"] = run_key, out
     settings["filter"] = names or settings["filter"]
     store = None if args.no_ingest else _open_store(cfg.store_path, hint="pass --no-ingest to write JSON results only")
@@ -585,39 +391,16 @@ def cmd_bench(args):
 def cmd_config(args):
     if args.action == "init":
         # `init` does not read the file: it resolves the logging settings from the flags and the environment
-        _start_logging(_no_config(), args, None, "config", read_config=False)
+        _start_logging(config_mod.Config.empty(), args, None, "config", read_config=False)
         path = config_mod.write_template(args.dir, args.adapter)
         print(f"wrote {path}")
         return EXIT_OK
     cfg = _prepare(args)
-    rows = [*_resolved(cfg), *_logging_rows(cfg, args)]
+    rows = [*_resolved(cfg), *log.logging_rows(cfg, args)]
     print(f"file  {cfg.where}\nroot  {cfg.root}")
     for key, value, source in rows:
         print(f"{key:<26} {value}  ({source})")
     return EXIT_OK
-
-
-def _no_config() -> config_mod.Config:
-    """The configuration of a command that does not read the file: the working directory, no data."""
-    return config_mod.Config(root=Path.cwd(), path=None, data={})
-
-
-def _logging_rows(cfg, args):
-    """What `bx config show` adds for the log: the switch, the level and the verbosity, each with
-    where it came from (a flag, an environment variable, the file or the default)."""
-    setting, source = cfg.pick_with_source("logging", args.log, flag="--log")
-    if isinstance(setting, str):
-        setting = setting.replace("{root}", str(cfg.root))
-    if isinstance(setting, str) and "{out}" not in setting:
-        setting = str(cfg._path(setting).resolve() if source == "file" else Path(setting).expanduser().resolve())
-    else:
-        setting = json.dumps(setting)
-    yield "logging", setting, _source_text(source)
-    level, level_source = _log_level(cfg, args)
-    yield "log level", logging.getLevelName(level).lower(), level_source
-    yield "verbosity", str(args.verbosity), args.verbosity_source
-    harness, harness_source = _harness_verbosity(cfg, args)
-    yield "harness verbosity", str(harness), harness_source
 
 
 def _config_row(cfg: config_mod.Config, key: str, default=None) -> tuple[str, str, str]:
@@ -886,7 +669,7 @@ def _read(cfg, args, policy, sources):
     # and a log that cannot be opened there is skipped, not refused, unless a flag named it.
     run_dir = session.run_directory(cfg.results_dir, args.run)
     cfg = _start_logging(cfg, args, run_dir if run_dir.is_dir() else None, "compare", lenient=True)
-    _log_settings(sources)
+    log.log_settings(sources)
     if args.results:
         store = MemoryStore()  # the ad hoc path: validated in memory without PyArrow
         outcome = store.ingest_paths(args.results)
@@ -923,7 +706,7 @@ def _measure(cfg, args, policy, sources):
         say.info(
             f"{store.path}"
         )  # stderr, so --json output stays clean; after the checks, so a refusal does not print it
-    _log_settings([*sources, *settings.pop("sources"), ("compare.rounds", rounds, rounds_source)])
+    log.log_settings([*sources, *settings.pop("sources"), ("compare.rounds", rounds, rounds_source)])
     settings["run_key"], settings["out"] = run_key, out
     if policy["profile"] == "variants":
         doc = session.compare_variants(
@@ -997,7 +780,7 @@ def _compare(store, args, policy):
 
 def cmd_validate(args):
     # `validate` does not read the config file: the logging settings come from the flags and the environment.
-    _start_logging(_no_config(), args, None, "validate", read_config=False)
+    _start_logging(config_mod.Config.empty(), args, None, "validate", read_config=False)
     valid = 0
     logger.info("validating %d file(s) as %s", len(args.files), args.kind)
     for path in args.files:
@@ -1155,11 +938,11 @@ def _add_target_options(parser, command):
     )
     parser.add_argument(
         "--harness-verbosity",
-        type=_non_negative,
+        type=log.parse_non_negative,
         metavar="N",
         help=f"ask the harness to say more (default {config_mod.DEFAULTS['adapter.verbosity']}: nothing more). "
         "pyperf and asv: 1 or more passes --verbose; Google Benchmark: N is passed as --v=N. Its output is "
-        f"logged in full. Each -v past -vv does the same (-vvv is 1). ${HARNESS_VERBOSITY_ENV}, adapter.verbosity",
+        f"logged in full. Each -v past -vv does the same (-vvv is 1). ${log.HARNESS_VERBOSITY_ENV}, adapter.verbosity",
     )
     parser.add_argument(
         "--no-build",
@@ -1205,7 +988,7 @@ def _logging_options() -> argparse.ArgumentParser:
         type=str.lower,
         choices=list(log.LEVELS),
         metavar="LEVEL",
-        help=f"what the log keeps: {', '.join(log.LEVELS)} (default {config_mod.DEFAULTS['log_level']}; ${LOG_LEVEL_ENV})",
+        help=f"what the log keeps: {', '.join(log.LEVELS)} (default {config_mod.DEFAULTS['log_level']}; ${log.LOG_LEVEL_ENV})",
     )
     parent.add_argument(
         "-v",
@@ -1213,7 +996,7 @@ def _logging_options() -> argparse.ArgumentParser:
         action="count",
         default=None,
         help=f"show more on the terminal: -v every INFO record, -vv DEBUG too; each -v past -vv also asks the "
-        f"harness to say more (--harness-verbosity) (${VERBOSE_ENV})",
+        f"harness to say more (--harness-verbosity) (${log.VERBOSE_ENV})",
     )
     parent.add_argument(
         "-q",
@@ -1496,7 +1279,7 @@ def main(argv=None):
         ap.error(f"unrecognized arguments: {' '.join(extra)}")
     args.argv = list(sys.argv[1:] if argv is None else argv)  # the header records the command as given
     try:
-        args.verbosity, args.verbosity_source, args.verbose_extra = _verbosity(args)
+        args.verbosity, args.verbosity_source, args.verbose_extra = log.resolve_verbosity(args)
     except UsageError as e:
         log.start_console(0)
         say.error(f"bx {args.cmd}: error: {e}")

@@ -106,6 +106,11 @@ class Config:
     data: dict
     log_file: Path | None = None  # the log's file, once cli._start_logging has resolved it
 
+    @classmethod
+    def empty(cls, root: Path | None = None) -> "Config":
+        """An empty configuration for commands that do not read `benchx.conf.json`."""
+        return cls(root=root if root is not None else Path.cwd(), path=None, data={})
+
     @property
     def where(self) -> str:
         return str(self.path) if self.path else f"{CONFIG_FILE} (none found from {self.root} upward)"
@@ -132,7 +137,7 @@ class Config:
         if flag_value is not None:
             return flag_value, "flag"
         if env and (from_env := os.environ.get(env)):
-            return from_env, "env"
+            return from_env, f"environment {env}"
         if (file_value := self.get(key)) is not None:
             return file_value, "file"
         resolved_default = DEFAULTS.get(key, REQUIRED) if default is _UNSET else default
@@ -205,7 +210,7 @@ def load(start=".") -> Config:
                     f"{old} is the old configuration format, which is no longer read: "
                     f"move its settings into {CONFIG_FILE} (schemas/config/0.1.0)"
                 )
-        return Config(root=start, path=None, data={})
+        return Config.empty(start)
     data, errors = loader.read(path)
     if data is None:
         raise ConfigError(f"{path}: " + "; ".join(str(error) for error in errors))

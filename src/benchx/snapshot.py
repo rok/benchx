@@ -466,7 +466,7 @@ def setup_facts(suite_root, env) -> tuple[dict | None, str | None]:
     named = env.get("BENCHX_SETUP_FILE")
     path = Path(named or Path(suite_root) / ".benchx" / "setup.json")
     # BENCHX_SETUP_FILE is one of benchx's own control variables, which the log gives with their values
-    # (cli.CONTROL_ENV): the path is named wherever the file is.
+    # (log.CONTROL_ENV): the path is named wherever the file is.
     shown = str(path)
     if not path.exists():
         if named:

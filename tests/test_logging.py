@@ -383,17 +383,33 @@ def test_the_log_records_the_arguments_as_parsed_and_the_environment_it_consults
 def test_the_log_names_the_config_file_when_there_is_one(build, tmp):
     path = write_config(tmp, adapter={"name": "google-benchmark", "suite": "demo-bench"})
     assert cli.main(["bench", str(build), "--run-key", "g1"]) == cli.EXIT_OK
-    assert f" INFO config file: {path}; project root {tmp}; " in log_of(tmp, "g1")
+    text = log_of(tmp, "g1")
+    assert f" INFO config file: {path}; project root {tmp}; " in text
+    assert " DEBUG config data: " in text
 
 
 # --- review: a refused log path leaves nothing behind; zeros are arguments; stop() leaves no state
 
 
-@pytest.mark.parametrize("name, message", [("{out}", "is a directory"), ("{out}/sub/bx.log", "cannot open")])
-def test_a_refused_log_path_in_the_output_folder_does_not_create_the_folder(name, message, build, tmp, capsys):
-    assert cli.main(["bench", str(build), *GBENCH, "--out", str(tmp / "o"), "--log-file", name]) == cli.EXIT_REFUSED
-    assert message in capsys.readouterr().err
+def test_a_refused_log_path_in_the_output_folder_does_not_create_the_folder(build, tmp, capsys):
+    assert (
+        cli.main(["bench", str(build), *GBENCH, "--out", str(tmp / "o"), "--log-file", "{out}/sub/bx.log"])
+        == cli.EXIT_REFUSED
+    )
+    assert "cannot open" in capsys.readouterr().err
     assert not (tmp / "o").exists()
+
+
+def test_a_directory_log_path_defaults_to_bx_log_inside_it(build, tmp):
+    assert (
+        cli.main(["bench", str(build), *GBENCH, "--out", str(tmp / "o"), "--log-file", "{out}", "--no-ingest"])
+        == cli.EXIT_OK
+    )
+    assert " INFO start: benchx " in (tmp / "o" / "bx.log").read_text()
+    log_dir = tmp / "logs"
+    log_dir.mkdir()
+    assert cli.main(["head", "--log-file", str(log_dir)]) == cli.EXIT_OK
+    assert " INFO start: benchx " in (log_dir / "bx.log").read_text()
 
 
 def test_a_log_file_directly_in_the_output_folder_creates_it(build, tmp):
